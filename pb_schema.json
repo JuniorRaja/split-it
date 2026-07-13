@@ -1,0 +1,830 @@
+[
+    {
+        "id":  "pbc_2865406579",
+        "listRule":  "@request.auth.collectionName = \"splitit_users\"",
+        "viewRule":  "@request.auth.collectionName = \"splitit_users\"",
+        "createRule":  null,
+        "updateRule":  "id = @request.auth.id",
+        "deleteRule":  null,
+        "name":  "splitit_users",
+        "type":  "auth",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text1579384326",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "name",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "cost":  0,
+                           "help":  "",
+                           "hidden":  true,
+                           "id":  "password901924565",
+                           "max":  0,
+                           "min":  8,
+                           "name":  "password",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "password"
+                       },
+                       {
+                           "autogeneratePattern":  "[a-zA-Z0-9]{50}",
+                           "help":  "",
+                           "hidden":  true,
+                           "id":  "text2504183744",
+                           "max":  60,
+                           "min":  30,
+                           "name":  "tokenKey",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "exceptDomains":  null,
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "email3885137012",
+                           "name":  "email",
+                           "onlyDomains":  null,
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "email"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "bool1547992806",
+                           "name":  "emailVisibility",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  true,
+                           "type":  "bool"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "bool256245529",
+                           "name":  "verified",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  true,
+                           "type":  "bool"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+                        "CREATE UNIQUE INDEX `idx_tokenKey_pbc_2865406579` ON `splitit_users` (`tokenKey`)",
+                        "CREATE UNIQUE INDEX `idx_email_pbc_2865406579` ON `splitit_users` (`email`) WHERE `email` != \u0027\u0027"
+                    ],
+        "created":  "2026-07-13 15:43:05.779Z",
+        "updated":  "2026-07-13 16:13:47.897Z",
+        "system":  false,
+        "authRule":  "",
+        "manageRule":  null,
+        "authAlert":  {
+                          "enabled":  true,
+                          "emailTemplate":  {
+                                                "subject":  "Login from a new location",
+                                                "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eWe noticed a login to your {APP_NAME} account from a new location:\u003c/p\u003e\n\u003cp\u003e\u003cem\u003e{ALERT_INFO}\u003c/em\u003e\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eIf this wasn\u0027t you, you should immediately change your {APP_NAME} account password to revoke access from all other locations.\u003c/strong\u003e\u003c/p\u003e\n\u003cp\u003eIf this was you, you may disregard this email.\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                            }
+                      },
+        "oauth2":  {
+                       "providers":  [
+
+                                     ],
+                       "mappedFields":  {
+                                            "id":  "",
+                                            "name":  "",
+                                            "username":  "",
+                                            "avatarURL":  ""
+                                        },
+                       "enabled":  false
+                   },
+        "passwordAuth":  {
+                             "enabled":  true,
+                             "identityFields":  [
+                                                    "email"
+                                                ]
+                         },
+        "mfa":  {
+                    "enabled":  false,
+                    "duration":  600,
+                    "rule":  ""
+                },
+        "otp":  {
+                    "enabled":  false,
+                    "duration":  180,
+                    "length":  8,
+                    "emailTemplate":  {
+                                          "subject":  "OTP for {APP_NAME}",
+                                          "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eYour one-time password is: \u003cstrong\u003e{OTP}\u003c/strong\u003e\u003c/p\u003e\n\u003cp\u003e\u003ci\u003eIf you didn\u0027t ask for the one-time password, you can ignore this email.\u003c/i\u003e\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                      }
+                },
+        "authToken":  {
+                          "duration":  604800
+                      },
+        "passwordResetToken":  {
+                                   "duration":  1800
+                               },
+        "emailChangeToken":  {
+                                 "duration":  1800
+                             },
+        "verificationToken":  {
+                                  "duration":  259200
+                              },
+        "fileToken":  {
+                          "duration":  180
+                      },
+        "verificationTemplate":  {
+                                     "subject":  "Verify your {APP_NAME} email",
+                                     "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eThank you for joining us at {APP_NAME}.\u003c/p\u003e\n\u003cp\u003eClick on the button below to verify your email address.\u003c/p\u003e\n\u003cp\u003e\n  \u003ca class=\"btn\" href=\"{APP_URL}/_/#/auth/confirm-verification/{TOKEN}\" target=\"_blank\" rel=\"noopener\"\u003eVerify\u003c/a\u003e\n\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                 },
+        "resetPasswordTemplate":  {
+                                      "subject":  "Reset your {APP_NAME} password",
+                                      "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eClick on the button below to reset your password.\u003c/p\u003e\n\u003cp\u003e\n  \u003ca class=\"btn\" href=\"{APP_URL}/_/#/auth/confirm-password-reset/{TOKEN}\" target=\"_blank\" rel=\"noopener\"\u003eReset password\u003c/a\u003e\n\u003c/p\u003e\n\u003cp\u003e\u003ci\u003eIf you didn\u0027t ask to reset your password, you can ignore this email.\u003c/i\u003e\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                  },
+        "confirmEmailChangeTemplate":  {
+                                           "subject":  "Confirm your {APP_NAME} new email address",
+                                           "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eClick on the button below to confirm your new email address.\u003c/p\u003e\n\u003cp\u003e\n  \u003ca class=\"btn\" href=\"{APP_URL}/_/#/auth/confirm-email-change/{TOKEN}\" target=\"_blank\" rel=\"noopener\"\u003eConfirm new email\u003c/a\u003e\n\u003c/p\u003e\n\u003cp\u003e\u003ci\u003eIf you didn\u0027t ask to change your email address, you can ignore this email.\u003c/i\u003e\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                       }
+    },
+    {
+        "id":  "pbc_1498227100",
+        "listRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
+        "viewRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
+        "createRule":  "@request.auth.collectionName = \"splitit_users\" \u0026\u0026 owner = @request.auth.id",
+        "updateRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
+        "deleteRule":  "owner = @request.auth.id",
+        "name":  "splitit_trips",
+        "type":  "base",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text1579384326",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "name",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text1767278655",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "currency",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation3479234172",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "owner",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation1168167679",
+                           "maxSelect":  999,
+                           "minSelect":  0,
+                           "name":  "members",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+
+                    ],
+        "created":  "2026-07-13 15:43:05.926Z",
+        "updated":  "2026-07-13 16:13:48.309Z",
+        "system":  false
+    },
+    {
+        "id":  "pbc_843084644",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "updateRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "deleteRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "name":  "splitit_expenses",
+        "type":  "base",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "cascadeDelete":  true,
+                           "collectionId":  "pbc_1498227100",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation1985410363",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "trip",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text1843675174",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "description",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "number2392944706",
+                           "max":  null,
+                           "min":  0,
+                           "name":  "amount",
+                           "onlyInt":  false,
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "number"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation2335707122",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "paid_by",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "date2862495610",
+                           "max":  "",
+                           "min":  "",
+                           "name":  "date",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "date"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text105650625",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "category",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text18589324",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "notes",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text188982912",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "split_mode",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+
+                    ],
+        "created":  "2026-07-13 15:43:06.056Z",
+        "updated":  "2026-07-13 16:13:48.572Z",
+        "system":  false
+    },
+    {
+        "id":  "pbc_3997417623",
+        "listRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "viewRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "createRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "updateRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "deleteRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "name":  "splitit_splits",
+        "type":  "base",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "cascadeDelete":  true,
+                           "collectionId":  "pbc_843084644",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation758812070",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "expense",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation2375276105",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "user",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "number2392944706",
+                           "max":  null,
+                           "min":  0,
+                           "name":  "amount",
+                           "onlyInt":  false,
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "number"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "number4010188122",
+                           "max":  null,
+                           "min":  null,
+                           "name":  "share",
+                           "onlyInt":  false,
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "number"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+
+                    ],
+        "created":  "2026-07-13 15:43:06.187Z",
+        "updated":  "2026-07-13 16:13:48.854Z",
+        "system":  false
+    },
+    {
+        "id":  "pbc_2092661859",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "updateRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "deleteRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "name":  "splitit_settlements",
+        "type":  "base",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "cascadeDelete":  true,
+                           "collectionId":  "pbc_1498227100",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation1985410363",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "trip",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation3105530224",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "from",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation3616002756",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "to",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "number2392944706",
+                           "max":  null,
+                           "min":  0,
+                           "name":  "amount",
+                           "onlyInt":  false,
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "number"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "date2862495610",
+                           "max":  "",
+                           "min":  "",
+                           "name":  "date",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "date"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text18589324",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "notes",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+
+                    ],
+        "created":  "2026-07-13 15:43:06.339Z",
+        "updated":  "2026-07-13 16:13:49.122Z",
+        "system":  false
+    },
+    {
+        "id":  "pbc_3131214181",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "updateRule":  null,
+        "deleteRule":  null,
+        "name":  "splitit_activity",
+        "type":  "base",
+        "fields":  [
+                       {
+                           "autogeneratePattern":  "[a-z0-9]{15}",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3208210256",
+                           "max":  15,
+                           "min":  15,
+                           "name":  "id",
+                           "pattern":  "^[a-z0-9]+$",
+                           "presentable":  false,
+                           "primaryKey":  true,
+                           "required":  true,
+                           "system":  true,
+                           "type":  "text"
+                       },
+                       {
+                           "cascadeDelete":  true,
+                           "collectionId":  "pbc_1498227100",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation1985410363",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "trip",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "cascadeDelete":  false,
+                           "collectionId":  "pbc_2865406579",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "relation1148540665",
+                           "maxSelect":  1,
+                           "minSelect":  0,
+                           "name":  "actor",
+                           "presentable":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "relation"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text1204587666",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "action",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  true,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text772177811",
+                           "max":  0,
+                           "min":  0,
+                           "name":  "detail",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate2990389176",
+                           "name":  "created",
+                           "onCreate":  true,
+                           "onUpdate":  false,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       },
+                       {
+                           "hidden":  false,
+                           "id":  "autodate3332085495",
+                           "name":  "updated",
+                           "onCreate":  true,
+                           "onUpdate":  true,
+                           "presentable":  false,
+                           "system":  false,
+                           "type":  "autodate"
+                       }
+                   ],
+        "indexes":  [
+
+                    ],
+        "created":  "2026-07-13 15:43:06.478Z",
+        "updated":  "2026-07-13 16:13:49.348Z",
+        "system":  false
+    }
+]
