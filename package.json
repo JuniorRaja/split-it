@@ -1,0 +1,11 @@
+{
+  "name": "split-it",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.26.0"
+  }
+}
