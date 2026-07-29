@@ -531,9 +531,10 @@ function TripsScreen({me,toast}){
     <div className="topbar">
       <span className="wordmark">{APP_NAME}</span>
       <div className="stack">
-        <Avatar user={me} size={34}/>
-        <button className="iconbtn" title="Copy your member ID"
-          onClick={async()=>toast((await copyText(me.id))?"Member ID copied":"Couldn't copy member ID")}>🆔</button>
+        <button className="iconbtn" title="Profile & account" aria-label="Profile & account"
+          style={{padding:0,borderRadius:"999px"}} onClick={()=>go("#/profile")}>
+          <Avatar user={me} size={34}/>
+        </button>
         <button className="iconbtn" title="Sign out"
           onClick={()=>{pb.authStore.clear();location.reload()}}>⏻</button>
       </div>
@@ -569,6 +570,172 @@ function TripsScreen({me,toast}){
           onClick={()=>setF({...f,currency:c.code})}>{c.sym.trim()} {c.code}</button>)}</div>
       <button className="btn" style={{marginTop:24}} disabled={busy||!f.name.trim()} onClick={create}>Create trip</button>
     </Sheet>}
+  </>;
+}
+
+/* ================= profile ================= */
+function ProfileScreen({me,toast}){
+  const [busy,setBusy]=useState("");
+  const [confirm,setConfirm]=useState("");
+
+  async function eraseLocalData(){
+    setBusy("local");
+    try{
+      Object.keys(localStorage)
+        .filter(k=>k.startsWith("si_")||k.startsWith("si_c_"))
+        .forEach(k=>localStorage.removeItem(k));
+      toast("Local app data erased from this device.");
+      track("profile_erase_local");
+    }catch(e){ toast(e?.message||"Couldn't erase local data."); }
+    setBusy("");
+  }
+
+  async function eraseServerData(){
+    setBusy("server");
+    try{
+      const [ownedTrips,memberTrips,paidExpenses,mySettlements]=await Promise.all([
+        col("trips").getFullList({filter:`owner=\"${me.id}\"`}),
+        col("trips").getFullList({filter:`members.id ?= \"${me.id}\" && owner != \"${me.id}\"`}),
+        col("expenses").getFullList({filter:`paid_by=\"${me.id}\"`}),
+        col("settlements").getFullList({filter:`from=\"${me.id}\" || to=\"${me.id}\"`}),
+      ]);
+
+      for(const e of paidExpenses){
+        try{ await col("expenses").delete(e.id); }catch{}
+      }
+      for(const s of mySettlements){
+        try{ await col("settlements").delete(s.id); }catch{}
+      }
+      for(const t of memberTrips){
+        try{ await col("trips").update(t.id,{"members-":me.id}); }catch{}
+      }
+      for(const t of ownedTrips){
+        try{ await col("trips").delete(t.id); }catch{}
+      }
+
+      toast("Data erase complete (best effort based on permissions).");
+      track("profile_erase_server", {
+        ownedTrips: ownedTrips.length,
+        memberTrips: memberTrips.length,
+        paidExpenses: paidExpenses.length,
+        settlements: mySettlements.length,
+      });
+      setConfirm("");
+    }catch(e){ toast(e?.data?.message||e.message||"Couldn't erase server data."); }
+    setBusy("");
+  }
+
+  async function deleteAccount(){
+    setBusy("account");
+    try{
+      await col("users").delete(me.id);
+      track("profile_delete_account");
+      pb.authStore.clear();
+      location.hash="#/";
+      location.reload();
+    }catch(e){
+      if(e?.status===403||e?.status===400){
+        toast("Account deletion is disabled by server rules. Ask your admin to enable it.");
+      }else{
+        toast(e?.data?.message||e.message||"Couldn't delete account.");
+      }
+    }
+    setBusy("");
+  }
+
+  return <>
+    <div className="topbar">
+      <button className="iconbtn" onClick={()=>go("#/")} aria-label="Back">←</button>
+      <span className="wordmark" style={{fontSize:17}}>Profile</span>
+      <button className="iconbtn" title="Sign out" onClick={()=>{pb.authStore.clear();location.reload()}}>⏻</button>
+    </div>
+
+    <h1 className="disp anim">Your profile</h1>
+    <p className="sub anim">Manage your account details, member ID, and personal data controls.</p>
+
+    <h3 className="h3">User profile</h3>
+    <div className="card anim">
+      <div className="rrow">
+        <Avatar user={me} size={44}/>
+        <div className="rmain">
+          <div className="rtitle">{me.name || "Unnamed user"}</div>
+          <div className="rsub">{me.email || "No email"}</div>
+        </div>
+      </div>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Member ID</div>
+          <div className="rsub mono">{me.id}</div>
+        </div>
+        <button className="btn sm ghost" onClick={async()=>{
+          toast((await copyText(me.id))?"Member ID copied":"Couldn't copy member ID");
+        }}>Copy</button>
+      </div>
+    </div>
+
+    <h3 className="h3">Details</h3>
+    <div className="card anim" style={{animationDelay:"40ms"}}>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Email status</div>
+          <div className="rsub">{me.verified?"Verified":"Not verified"}</div>
+        </div>
+      </div>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Joined</div>
+          <div className="rsub">{niceDate(me.created)}</div>
+        </div>
+      </div>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Last updated</div>
+          <div className="rsub">{niceDate(me.updated)}</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 className="h3">Erase data</h3>
+    <div className="card anim" style={{animationDelay:"80ms"}}>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Erase local app data</div>
+          <div className="rsub">Removes cached trips, auth guard state, and local preferences on this device.</div>
+        </div>
+        <button className="btn sm ghost" disabled={busy!==""} onClick={eraseLocalData}>
+          {busy==="local"?"Erasing…":"Erase"}
+        </button>
+      </div>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Erase my trip data</div>
+          <div className="rsub">Deletes expenses you paid, settlements involving you, leaves shared trips, and removes trips you own.</div>
+        </div>
+        <button className="btn sm danger" disabled={busy!==""} onClick={()=>setConfirm("server")}>Erase</button>
+      </div>
+    </div>
+
+    <h3 className="h3">Danger zone</h3>
+    <div className="card anim" style={{animationDelay:"120ms"}}>
+      <div className="rrow">
+        <div className="rmain">
+          <div className="rtitle" style={{fontSize:14}}>Delete account</div>
+          <div className="rsub">Permanently deletes your account if your server allows self-delete.</div>
+        </div>
+        <button className="btn sm danger" disabled={busy!==""} onClick={()=>setConfirm("account")}>Delete</button>
+      </div>
+    </div>
+
+    {confirm==="server" && <Confirm title="Erase your trip data?"
+      body="This removes your paid expenses and settlements, leaves shared trips, and deletes trips that you own. This cannot be undone."
+      yes="Erase data"
+      onClose={()=>setConfirm("")}
+      onYes={eraseServerData}/>} 
+    {confirm==="account" && <Confirm title="Delete account?"
+      body="Your account will be permanently removed if server rules allow it. If deletion is blocked, you'll see an error and can contact your admin."
+      yes="Delete account"
+      onClose={()=>setConfirm("")}
+      onYes={deleteAccount}/>} 
   </>;
 }
 
@@ -1343,10 +1510,13 @@ function App(){
     return <><AuthScreen onAuth={()=>force(x=>x+1)} toast={toast}/><Toast msg={toastMsg}/></>;
   const me=pb.authStore.record;
 
+  const isProfileRoute = /^#\/profile\/?$/.test(hash);
   const tripMatch=hash.match(/^#\/trip\/(\w+)/);
   return <>
     {tripMatch
       ? <TripScreen key={tripMatch[1]} tripId={tripMatch[1]} me={me} toast={toast}/>
+      : isProfileRoute
+      ? <ProfileScreen me={me} toast={toast}/>
       : <TripsScreen me={me} toast={toast}/>}
     <Toast msg={toastMsg}/>
   </>;

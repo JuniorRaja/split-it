@@ -862,14 +862,19 @@ function TripsScreen({
     className: "wordmark"
   }, APP_NAME), React.createElement("div", {
     className: "stack"
+  }, React.createElement("button", {
+    className: "iconbtn",
+    title: "Profile & account",
+    "aria-label": "Profile & account",
+    style: {
+      padding: 0,
+      borderRadius: "999px"
+    },
+    onClick: () => go("#/profile")
   }, React.createElement(Avatar, {
     user: me,
     size: 34
-  }), React.createElement("button", {
-    className: "iconbtn",
-    title: "Copy your member ID",
-    onClick: async () => toast((await copyText(me.id)) ? "Member ID copied" : "Couldn't copy member ID")
-  }, "\uD83C\uDD94"), React.createElement("button", {
+  })), React.createElement("button", {
     className: "iconbtn",
     title: "Sign out",
     onClick: () => {
@@ -958,6 +963,253 @@ function TripsScreen({
     disabled: busy || !f.name.trim(),
     onClick: create
   }, "Create trip")));
+}
+function ProfileScreen({
+  me,
+  toast
+}) {
+  const [busy, setBusy] = useState("");
+  const [confirm, setConfirm] = useState("");
+  async function eraseLocalData() {
+    setBusy("local");
+    try {
+      Object.keys(localStorage).filter(k => k.startsWith("si_") || k.startsWith("si_c_")).forEach(k => localStorage.removeItem(k));
+      toast("Local app data erased from this device.");
+      track("profile_erase_local");
+    } catch (e) {
+      toast(e?.message || "Couldn't erase local data.");
+    }
+    setBusy("");
+  }
+  async function eraseServerData() {
+    setBusy("server");
+    try {
+      const [ownedTrips, memberTrips, paidExpenses, mySettlements] = await Promise.all([col("trips").getFullList({
+        filter: `owner=\"${me.id}\"`
+      }), col("trips").getFullList({
+        filter: `members.id ?= \"${me.id}\" && owner != \"${me.id}\"`
+      }), col("expenses").getFullList({
+        filter: `paid_by=\"${me.id}\"`
+      }), col("settlements").getFullList({
+        filter: `from=\"${me.id}\" || to=\"${me.id}\"`
+      })]);
+      for (const e of paidExpenses) {
+        try {
+          await col("expenses").delete(e.id);
+        } catch {}
+      }
+      for (const s of mySettlements) {
+        try {
+          await col("settlements").delete(s.id);
+        } catch {}
+      }
+      for (const t of memberTrips) {
+        try {
+          await col("trips").update(t.id, {
+            "members-": me.id
+          });
+        } catch {}
+      }
+      for (const t of ownedTrips) {
+        try {
+          await col("trips").delete(t.id);
+        } catch {}
+      }
+      toast("Data erase complete (best effort based on permissions).");
+      track("profile_erase_server", {
+        ownedTrips: ownedTrips.length,
+        memberTrips: memberTrips.length,
+        paidExpenses: paidExpenses.length,
+        settlements: mySettlements.length
+      });
+      setConfirm("");
+    } catch (e) {
+      toast(e?.data?.message || e.message || "Couldn't erase server data.");
+    }
+    setBusy("");
+  }
+  async function deleteAccount() {
+    setBusy("account");
+    try {
+      await col("users").delete(me.id);
+      track("profile_delete_account");
+      pb.authStore.clear();
+      location.hash = "#/";
+      location.reload();
+    } catch (e) {
+      if (e?.status === 403 || e?.status === 400) {
+        toast("Account deletion is disabled by server rules. Ask your admin to enable it.");
+      } else {
+        toast(e?.data?.message || e.message || "Couldn't delete account.");
+      }
+    }
+    setBusy("");
+  }
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "topbar"
+  }, React.createElement("button", {
+    className: "iconbtn",
+    onClick: () => go("#/"),
+    "aria-label": "Back"
+  }, "\u2190"), React.createElement("span", {
+    className: "wordmark",
+    style: {
+      fontSize: 17
+    }
+  }, "Profile"), React.createElement("button", {
+    className: "iconbtn",
+    title: "Sign out",
+    onClick: () => {
+      pb.authStore.clear();
+      location.reload();
+    }
+  }, "\u23FB")), React.createElement("h1", {
+    className: "disp anim"
+  }, "Your profile"), React.createElement("p", {
+    className: "sub anim"
+  }, "Manage your account details, member ID, and personal data controls."), React.createElement("h3", {
+    className: "h3"
+  }, "User profile"), React.createElement("div", {
+    className: "card anim"
+  }, React.createElement("div", {
+    className: "rrow"
+  }, React.createElement(Avatar, {
+    user: me,
+    size: 44
+  }), React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle"
+  }, me.name || "Unnamed user"), React.createElement("div", {
+    className: "rsub"
+  }, me.email || "No email"))), React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Member ID"), React.createElement("div", {
+    className: "rsub mono"
+  }, me.id)), React.createElement("button", {
+    className: "btn sm ghost",
+    onClick: async () => {
+      toast((await copyText(me.id)) ? "Member ID copied" : "Couldn't copy member ID");
+    }
+  }, "Copy"))), React.createElement("h3", {
+    className: "h3"
+  }, "Details"), React.createElement("div", {
+    className: "card anim",
+    style: {
+      animationDelay: "40ms"
+    }
+  }, React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Email status"), React.createElement("div", {
+    className: "rsub"
+  }, me.verified ? "Verified" : "Not verified"))), React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Joined"), React.createElement("div", {
+    className: "rsub"
+  }, niceDate(me.created)))), React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Last updated"), React.createElement("div", {
+    className: "rsub"
+  }, niceDate(me.updated))))), React.createElement("h3", {
+    className: "h3"
+  }, "Erase data"), React.createElement("div", {
+    className: "card anim",
+    style: {
+      animationDelay: "80ms"
+    }
+  }, React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Erase local app data"), React.createElement("div", {
+    className: "rsub"
+  }, "Removes cached trips, auth guard state, and local preferences on this device.")), React.createElement("button", {
+    className: "btn sm ghost",
+    disabled: busy !== "",
+    onClick: eraseLocalData
+  }, busy === "local" ? "Erasing…" : "Erase")), React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Erase my trip data"), React.createElement("div", {
+    className: "rsub"
+  }, "Deletes expenses you paid, settlements involving you, leaves shared trips, and removes trips you own.")), React.createElement("button", {
+    className: "btn sm danger",
+    disabled: busy !== "",
+    onClick: () => setConfirm("server")
+  }, "Erase"))), React.createElement("h3", {
+    className: "h3"
+  }, "Danger zone"), React.createElement("div", {
+    className: "card anim",
+    style: {
+      animationDelay: "120ms"
+    }
+  }, React.createElement("div", {
+    className: "rrow"
+  }, React.createElement("div", {
+    className: "rmain"
+  }, React.createElement("div", {
+    className: "rtitle",
+    style: {
+      fontSize: 14
+    }
+  }, "Delete account"), React.createElement("div", {
+    className: "rsub"
+  }, "Permanently deletes your account if your server allows self-delete.")), React.createElement("button", {
+    className: "btn sm danger",
+    disabled: busy !== "",
+    onClick: () => setConfirm("account")
+  }, "Delete"))), confirm === "server" && React.createElement(Confirm, {
+    title: "Erase your trip data?",
+    body: "This removes your paid expenses and settlements, leaves shared trips, and deletes trips that you own. This cannot be undone.",
+    yes: "Erase data",
+    onClose: () => setConfirm(""),
+    onYes: eraseServerData
+  }), confirm === "account" && React.createElement(Confirm, {
+    title: "Delete account?",
+    body: "Your account will be permanently removed if server rules allow it. If deletion is blocked, you'll see an error and can contact your admin.",
+    yes: "Delete account",
+    onClose: () => setConfirm(""),
+    onYes: deleteAccount
+  }));
 }
 const TABS = ["expenses", "balances", "totals", "activity"];
 function TripScreen({
@@ -2444,10 +2696,14 @@ function App() {
     msg: toastMsg
   }));
   const me = pb.authStore.record;
+  const isProfileRoute = /^#\/profile\/?$/.test(hash);
   const tripMatch = hash.match(/^#\/trip\/(\w+)/);
   return React.createElement(React.Fragment, null, tripMatch ? React.createElement(TripScreen, {
     key: tripMatch[1],
     tripId: tripMatch[1],
+    me: me,
+    toast: toast
+  }) : isProfileRoute ? React.createElement(ProfileScreen, {
     me: me,
     toast: toast
   }) : React.createElement(TripsScreen, {
