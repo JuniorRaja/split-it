@@ -3,18 +3,25 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="description" content="split·it is a fast trip expense splitter with multi-currency support, fair split modes, and realtime group sync." />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#0B6E4F" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0F1511" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="split·it" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="split·it — Trip Expense Splitter" />
+<meta property="og:description" content="Split travel expenses with multi-currency support, smart balances, and one-tap settlement suggestions." />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="split·it — Trip Expense Splitter" />
+<meta name="twitter:description" content="Split travel expenses with multi-currency support, smart balances, and one-tap settlement suggestions." />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="icons/icon-180.png" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💸</text></svg>" />
-<title>split·it — MAL26</title>
+<title>split·it — Expense Splitter</title>
 
-<link rel="preconnect" href="https://db.prasannar.com" crossorigin />
+<link rel="preconnect" href="https://open.er-api.com" crossorigin />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -22,7 +29,31 @@
 <script defer crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script defer crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/pocketbase@0.26.2/dist/pocketbase.umd.js"></script>
-<script defer src="app.js?v=3"></script>
+<script>
+  window.SPLITIT_CONFIG = Object.assign({
+    appName: "split·it",
+    tagline: "Split trips, not friendships.",
+    pocketbaseUrl: "https://db.prasannar.com",
+    collectionPrefix: "splitit_",
+    defaultCurrency: "INR",
+    allowEmailSignin: true,
+    allowSelfSignup: true,
+    requireEmailVerification: true,
+    roster: []
+  }, window.SPLITIT_CONFIG || {});
+  if (window.SPLITIT_CONFIG.appName) {
+    document.title = `${window.SPLITIT_CONFIG.appName} — Trip Expense Splitter`;
+  }
+  try {
+    const pbOrigin = new URL(window.SPLITIT_CONFIG.pocketbaseUrl).origin;
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = pbOrigin;
+    link.crossOrigin = "anonymous";
+    document.head.appendChild(link);
+  } catch {}
+</script>
+<script defer src="app.js?v=10"></script>
 
 <style>
   :root{

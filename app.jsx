@@ -2,20 +2,40 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 /* ================= config ================= */
-const PB_URL = "https://db.prasannar.com";
-const PREFIX = "splitit_";
+const APP_CONFIG = (() => {
+  const src = window.SPLITIT_CONFIG || {};
+  const roster = Array.isArray(src.roster) ? src.roster : [];
+  return {
+    appName: String(src.appName || "split·it").trim() || "split·it",
+    tagline: String(src.tagline || "Split trips, not friendships.").trim() || "Split trips, not friendships.",
+    pocketbaseUrl: String(src.pocketbaseUrl || "https://db.prasannar.com").trim() || "https://db.prasannar.com",
+    collectionPrefix: String(src.collectionPrefix || "splitit_").trim() || "splitit_",
+    defaultCurrency: String(src.defaultCurrency || "INR").trim().toUpperCase() || "INR",
+    allowEmailSignin: src.allowEmailSignin !== false,
+    allowSelfSignup: src.allowSelfSignup === true,
+    requireEmailVerification: src.requireEmailVerification !== false,
+    roster,
+  };
+})();
+
+const APP_NAME = APP_CONFIG.appName;
+const APP_TAGLINE = APP_CONFIG.tagline;
+const PB_URL = APP_CONFIG.pocketbaseUrl;
+const PREFIX = APP_CONFIG.collectionPrefix;
 const pb = new PocketBase(PB_URL);
 pb.autoCancellation(false);
 const col = name => pb.collection(PREFIX + name);
 
-// known crew — powers the profile-picker sign in
-const ROSTER = [
-  { name: "Prasanna", email: "prasanna@prasannar.com" },
-  { name: "Chinna",   email: "chinna@prasannar.com" },
-  { name: "Sabari",   email: "sabari@prasannar.com" },
-  { name: "Lokesh",   email: "lokesh@prasannar.com" },
-  { name: "Dinesh",   email: "dinesh@prasannar.com" },
-];
+const ROSTER = APP_CONFIG.roster
+  .map(u => ({
+    name: String(u?.name || "").trim(),
+    email: String(u?.email || "").trim().toLowerCase(),
+  }))
+  .filter(u => u.name && u.email);
+const HAS_ROSTER = ROSTER.length > 0;
+const EMAIL_SIGNIN_ENABLED = APP_CONFIG.allowEmailSignin || !HAS_ROSTER;
+const SELF_SIGNUP_ENABLED = APP_CONFIG.allowSelfSignup;
+const REQUIRE_EMAIL_VERIFICATION = APP_CONFIG.requireEmailVerification;
 
 const CATEGORIES = [
   { key:"food",     label:"Food",      emoji:"🍕" },
@@ -46,6 +66,7 @@ const CURRENCIES = [
   { code:"VND", sym:"₫",   dec:0, name:"Vietnamese Dong" },
   { code:"LKR", sym:"Rs ", dec:2, name:"Sri Lankan Rupee" },
 ];
+const DEFAULT_CURRENCY = CURRENCIES.some(c => c.code === APP_CONFIG.defaultCurrency) ? APP_CONFIG.defaultCurrency : "INR";
 const SYM2CODE = { "₹":"INR", "$":"USD", "€":"EUR", "£":"GBP", "¥":"JPY", "AED":"AED" };
 const normCur = c => SYM2CODE[c] || c || "INR";
 const curOf = c => CURRENCIES.find(x=>x.code===normCur(c)) || { code:normCur(c), sym:normCur(c)+" ", dec:2 };
@@ -86,6 +107,14 @@ const AV_COLORS = ["#0E9F6E","#B3492F","#8C6D1F","#3E5C76","#6D4C7D","#2F6D80","
 const initials = (n="?") => n.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
 const avColor = (id="") => AV_COLORS[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%AV_COLORS.length];
 const r2 = n => Math.round(n*100)/100;
+const MAX_LEN = { tripName: 72, description: 120, notes: 280, comment: 300 };
+const cleanText = (v, max) => String(v || "").replace(/\s+/g, " ").trim().slice(0, max);
+const cleanEmail = v => String(v || "").trim().toLowerCase().slice(0, 200);
+const AUTH_GUARD_KEY = "si_auth_guard";
+const AUTH_PREFILL_EMAIL_KEY = "si_auth_prefill_email";
+const AUTH_FAIL_LIMIT = 6;
+const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_LOCK_MS = 8 * 60 * 1000;
 const today = () => { const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10); };
 const niceDate = d => d ? new Date(d).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "";
 const monthKey = d => new Date(d).toLocaleDateString(undefined,{month:"long",year:"numeric"});
@@ -98,6 +127,107 @@ function timeAgo(d){
   return niceDate(d);
 }
 const first = n => (n||"?").split(" ")[0];
+
+async function copyText(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function track(event, props = {}){
+  try {
+    const detail = { event, props, at: new Date().toISOString() };
+    window.dispatchEvent(new CustomEvent("splitit:event", { detail }));
+    if (typeof window.plausible === "function") window.plausible(event, { props });
+    if (typeof window.gtag === "function") window.gtag("event", event, props);
+  } catch {}
+}
+
+function reportError(err, context = "runtime"){
+  try {
+    const error = err instanceof Error ? err : new Error(String(err || "Unknown error"));
+    if (window.Sentry?.captureException) window.Sentry.captureException(error, { tags: { context } });
+    track("client_error", { context, message: error.message.slice(0, 240) });
+  } catch {}
+}
+
+function authGuardState(){
+  try {
+    const raw = JSON.parse(localStorage.getItem(AUTH_GUARD_KEY) || "{}");
+    return {
+      count: Number(raw.count) || 0,
+      firstFailAt: Number(raw.firstFailAt) || 0,
+      lockedUntil: Number(raw.lockedUntil) || 0,
+    };
+  } catch {
+    return { count: 0, firstFailAt: 0, lockedUntil: 0 };
+  }
+}
+
+function saveAuthGuard(next){
+  try { localStorage.setItem(AUTH_GUARD_KEY, JSON.stringify(next)); } catch {}
+}
+
+function canAttemptAuth(){
+  const s = authGuardState();
+  const now = Date.now();
+  if (s.lockedUntil > now) {
+    return { ok: false, waitSec: Math.ceil((s.lockedUntil - now) / 1000) };
+  }
+  if (now - s.firstFailAt > AUTH_WINDOW_MS) {
+    saveAuthGuard({ count: 0, firstFailAt: 0, lockedUntil: 0 });
+    return { ok: true, waitSec: 0 };
+  }
+  return { ok: true, waitSec: 0 };
+}
+
+function markAuthFailure(){
+  const now = Date.now();
+  const s = authGuardState();
+  const withinWindow = s.firstFailAt && now - s.firstFailAt <= AUTH_WINDOW_MS;
+  const next = {
+    count: withinWindow ? s.count + 1 : 1,
+    firstFailAt: withinWindow ? s.firstFailAt : now,
+    lockedUntil: 0,
+  };
+  if (next.count >= AUTH_FAIL_LIMIT) next.lockedUntil = now + AUTH_LOCK_MS;
+  saveAuthGuard(next);
+}
+
+function clearAuthGuard(){
+  saveAuthGuard({ count: 0, firstFailAt: 0, lockedUntil: 0 });
+}
+
+function setAuthPrefillEmail(email){
+  const safe = cleanEmail(email);
+  if (!safe) return;
+  try { localStorage.setItem(AUTH_PREFILL_EMAIL_KEY, safe); } catch {}
+}
+
+function getAuthPrefillEmail(){
+  try { return cleanEmail(localStorage.getItem(AUTH_PREFILL_EMAIL_KEY) || ""); }
+  catch { return ""; }
+}
+
+function clearAuthPrefillEmail(){
+  try { localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY); } catch {}
+}
 
 // split `total` among weights so the parts sum exactly to total
 function distribute(total, weights){
@@ -140,12 +270,13 @@ function logActivity(trip,actor,action,detail){
 function exportCSV(trip,expenses,splits,members){
   const base=normCur(trip.currency);
   const uName=id=>members.find(m=>m.id===id)?.name||id;
+  const splitIdx = new Map(splits.map(s => [`${s.expense}:${s.user}`, s.amount]));
   const head=["Date","Description","Category","Paid by","Currency","Amount","Rate",`Base (${base})`,
     ...members.map(m=>m.name)];
   const rows=expenses.map(e=>{
     const per=members.map(m=>{
-      const s=splits.find(x=>x.expense===e.id&&x.user===m.id);
-      return s?s.amount.toFixed(2):"";
+      const amount = splitIdx.get(`${e.id}:${m.id}`);
+      return amount==null?"":Number(amount).toFixed(2);
     });
     return [e.date?.slice(0,10)||"",e.description,catOf(e.category).label,uName(e.paid_by),
       normCur(e.currency||base),e.amount.toFixed(2),(e.fx_rate||1),baseAmt(e).toFixed(2),...per];
@@ -217,61 +348,154 @@ function useHash(){
 }
 const go = h => window.location.hash = h;
 
+function verificationContextFromHash(hash){
+  const h = String(hash || "");
+  const m = h.match(/^#\/auth\/confirm-verification\/([^/?#]+)(?:\?([^#]*))?/i)
+    || h.match(/^#\/verify-email\/([^/?#]+)(?:\?([^#]*))?/i);
+  if (!m) return { token: "", email: "" };
+  let token = m[1];
+  try { token = decodeURIComponent(token); } catch {}
+  const params = new URLSearchParams(m[2] || "");
+  const email = cleanEmail(params.get("email") || params.get("e") || "");
+  return { token, email };
+}
+
 /* ================= auth ================= */
 function AuthScreen({onAuth,toast}){
-  const [sel,setSel]=useState(null);
-  const [emailMode,setEmailMode]=useState(false);
-  const [email,setEmail]=useState(""); const [pw,setPw]=useState("");
+  const [signupMode,setSignupMode]=useState(false);
+  const [signupAllowed,setSignupAllowed]=useState(SELF_SIGNUP_ENABLED);
+  const [name,setName]=useState("");
+  const [email,setEmail]=useState(()=>getAuthPrefillEmail()); const [pw,setPw]=useState("");
+  const [pw2,setPw2]=useState("");
   const [err,setErr]=useState(""); const [busy,setBusy]=useState(false);
 
   async function submit(){
-    const id = emailMode ? email.trim() : sel?.email;
+    const guard = canAttemptAuth();
+    if (!guard.ok) {
+      const msg = `Too many attempts. Try again in ${Math.max(guard.waitSec, 1)}s.`;
+      setErr(msg); toast(msg); return;
+    }
+    const id = cleanEmail(email);
     if(!id||!pw)return;
     setErr(""); setBusy(true);
     try{
+      if (signupMode) {
+        const safeName = cleanText(name, 64);
+        if (!safeName) throw new Error("Name is required");
+        if (pw.length < 8) throw new Error("Password must be at least 8 characters");
+        if (pw !== pw2) throw new Error("Passwords do not match");
+        await col("users").create({ name: safeName, email: id, password: pw, passwordConfirm: pw2, emailVisibility: true });
+        if (REQUIRE_EMAIL_VERIFICATION) {
+          setAuthPrefillEmail(id);
+          await col("users").requestVerification(id);
+          clearAuthGuard();
+          setSignupMode(false);
+          setName("");
+          setPw("");
+          setPw2("");
+          const msg = "Account created. Check your email for a verification link before signing in.";
+          setErr(msg);
+          toast(msg);
+          track("signup_verification_requested", { method: "email" });
+          setBusy(false);
+          return;
+        }
+      }
       await col("users").authWithPassword(id,pw);
+      if (REQUIRE_EMAIL_VERIFICATION && pb.authStore.record?.verified !== true) {
+        pb.authStore.clear();
+        throw new Error("Your email is not verified yet. Please verify from the link in your inbox.");
+      }
+      clearAuthPrefillEmail();
+      clearAuthGuard();
+      track(signupMode ? "signup_success" : "signin_success", { method: "password" });
       onAuth();
-    }catch(e){ setErr(e?.status===400?"Wrong password — try again.":(e?.message||"Failed")); }
+    }catch(e){
+      const signupBlocked = signupMode && e?.status===403 && /only superusers can perform this action/i.test(String(e?.message||""));
+      if (!signupBlocked) markAuthFailure();
+      track(signupMode ? "signup_failed" : "signin_failed", { code: e?.status || "unknown" });
+      if (signupBlocked) {
+        setSignupAllowed(false);
+        setSignupMode(false);
+        const msg = "Sign-up is disabled on this server. Sign in with an existing account, or ask the admin to enable splitit_users createRule.";
+        setErr(msg);
+        toast(msg);
+      } else {
+        const signInError = REQUIRE_EMAIL_VERIFICATION
+          ? "Wrong email or password, or your email is not verified yet."
+          : "Wrong email or password — try again.";
+        setErr(signupMode
+          ? (e?.data?.message || e?.message || "Couldn't create the account.")
+          : (e?.status===400?signInError:(e?.message||"Failed")));
+      }
+    }
     setBusy(false);
   }
 
   return <div className="center anim">
-    <h1 className="disp" style={{fontSize:38}}>split<b style={{color:"var(--green-ink)"}}>·it</b></h1>
-    <p className="sub">Split trips, not friendships. Every rupee accounted for.</p>
+    <h1 className="disp" style={{fontSize:38}}>{APP_NAME}</h1>
+    <p className="sub">{APP_TAGLINE} Every cent accounted for.</p>
 
-    {!emailMode && <>
-      <div className="profiles">
-        {ROSTER.map((u,i)=>
-          <button key={u.email} className={"profile anim"+(sel?.email===u.email?" sel":"")}
-            style={{animationDelay:`${i*50}ms`}} onClick={()=>{setSel(u);setErr("")}}>
-            <Avatar user={{id:u.email,name:u.name}} size={52}/>{u.name}
-          </button>)}
-      </div>
-      {sel && <div className="card anim-pop" style={{marginTop:16}}>
-        <label>Password for {sel.name}</label>
-        <input type="password" autoFocus value={pw} onChange={e=>setPw(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="••••••••"/>
-        {err && <div className="err">{err}</div>}
-        <button className="btn" style={{marginTop:16}} disabled={busy||!pw} onClick={submit}>
-          {busy?"Signing in…":`Continue as ${sel.name}`}</button>
-      </div>}
-    </>}
-
-    {emailMode && <div className="card anim-pop" style={{marginTop:20}}>
+    <div className="card anim-pop" style={{marginTop:20}}>
+      {signupMode && <>
+        <label>Full name</label>
+        <input value={name} maxLength={64} onChange={e=>setName(e.target.value)} placeholder="Jane Doe" autoFocus/>
+      </>}
       <label>Email</label>
-      <input type="email" inputMode="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@mail.com" autoFocus/>
+      <input type="email" inputMode="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@mail.com" autoFocus={!signupMode}/>
       <label>Password</label>
       <input type="password" value={pw} onChange={e=>setPw(e.target.value)}
         onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="••••••••"/>
+      {signupMode && <>
+        <label>Confirm password</label>
+        <input type="password" value={pw2} onChange={e=>setPw2(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="••••••••"/>
+      </>}
       {err && <div className="err">{err}</div>}
-      <button className="btn" style={{marginTop:16}} disabled={busy||!pw||!email} onClick={submit}>
-        {busy?"Signing in…":"Sign in"}</button>
-    </div>}
+      <button className="btn" style={{marginTop:16}} disabled={busy||!pw||!email||(signupMode&&!name)} onClick={submit}>
+        {busy?(signupMode?"Creating account…":"Signing in…"):(signupMode?"Create account":"Sign in")}</button>
+    </div>
 
-    <p className="sub" style={{textAlign:"center",marginTop:18}}>
-      <a onClick={()=>{setEmailMode(!emailMode);setSel(null);setErr("")}}>
-        {emailMode?"← back to profiles":"sign in with email instead"}</a>
-    </p>
+    {signupAllowed && <p className="sub" style={{textAlign:"center",marginTop:12}}>
+      <a onClick={()=>{setSignupMode(!signupMode);setErr("")}}>
+        {signupMode?"Already have an account? Sign in":"New here? Create an account"}</a>
+    </p>}
+  </div>;
+}
+
+function VerifyEmailScreen({token,emailHint}){
+  const [state,setState]=useState("loading");
+  const [msg,setMsg]=useState("Verifying your email…");
+
+  useEffect(()=>{
+    let active = true;
+    (async()=>{
+      try{
+        await col("users").confirmVerification(token);
+        if(!active)return;
+        const safeEmail = cleanEmail(emailHint) || getAuthPrefillEmail();
+        if (safeEmail) setAuthPrefillEmail(safeEmail);
+        setState("ok");
+        setMsg("Email verified. You can sign in now.");
+        track("email_verification_success");
+      }catch(e){
+        if(!active)return;
+        setState("err");
+        setMsg(e?.data?.message || e?.message || "Verification failed or link expired.");
+        track("email_verification_failed", { code: e?.status || "unknown" });
+      }
+    })();
+    return ()=>{active=false};
+  },[token]);
+
+  return <div className="center anim" style={{paddingTop:40}}>
+    <h1 className="disp" style={{fontSize:34}}>{APP_NAME}</h1>
+    <p className="sub" style={{marginTop:12}}>{msg}</p>
+    <div className="card" style={{marginTop:18}}>
+      {state==="ok"
+        ? <button className="btn" onClick={()=>go("#/")}>Continue to sign in</button>
+        : <button className="btn ghost" onClick={()=>go("#/")}>Back to sign in</button>}
+    </div>
   </div>;
 }
 
@@ -279,7 +503,7 @@ function AuthScreen({onAuth,toast}){
 function TripsScreen({me,toast}){
   const [trips,setTrips]=useState(()=>cache.get("trips"));
   const [show,setShow]=useState(false);
-  const [f,setF]=useState({name:"",currency:"INR"});
+  const [f,setF]=useState({name:"",currency:DEFAULT_CURRENCY});
   const [busy,setBusy]=useState(false);
 
   const load=useCallback(async()=>{
@@ -291,21 +515,25 @@ function TripsScreen({me,toast}){
   useEffect(()=>{load()},[load]);
 
   async function create(){
-    if(!f.name.trim())return;
+    const name = cleanText(f.name, MAX_LEN.tripName);
+    if(!name)return;
     setBusy(true);
     try{
-      const t=await col("trips").create({...f,owner:me.id,members:[me.id]});
+      const t=await col("trips").create({...f,name,owner:me.id,members:[me.id]});
+      track("trip_created", { currency: f.currency });
       logActivity(t.id,me.id,"trip_created",`created trip “${t.name}”`);
-      setShow(false); setF({name:"",currency:"INR"}); go("#/trip/"+t.id);
+      setShow(false); setF({name:"",currency:DEFAULT_CURRENCY}); go("#/trip/"+t.id);
     }catch(e){ toast(e?.data?.message||e.message); }
     setBusy(false);
   }
 
   return <>
     <div className="topbar">
-      <span className="wordmark">split<b>·it</b></span>
+      <span className="wordmark">{APP_NAME}</span>
       <div className="stack">
         <Avatar user={me} size={34}/>
+        <button className="iconbtn" title="Copy your member ID"
+          onClick={async()=>toast((await copyText(me.id))?"Member ID copied":"Couldn't copy member ID")}>🆔</button>
         <button className="iconbtn" title="Sign out"
           onClick={()=>{pb.authStore.clear();location.reload()}}>⏻</button>
       </div>
@@ -333,7 +561,8 @@ function TripsScreen({me,toast}){
     <button className="btn fab" onClick={()=>setShow(true)}>＋ New trip</button>
     {show && <Sheet title="New trip" onClose={()=>setShow(false)}>
       <label>Trip name</label>
-      <input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Goa 2027" autoFocus/>
+      <input value={f.name} maxLength={MAX_LEN.tripName}
+        onChange={e=>setF({...f,name:e.target.value})} placeholder="Weekend in Goa" autoFocus/>
       <label>Base currency (balances are kept in this)</label>
       <div className="chips">{CURRENCIES.map(c=>
         <button key={c.code} className={"chip"+(f.currency===c.code?" on":"")}
@@ -363,6 +592,7 @@ function TripScreen({tripId,me,toast}){
     return all.filter((m,i,a)=>a.findIndex(x=>x.id===m.id)===i);
   },[trip]);
   const uById=id=>members.find(m=>m.id===id)||{name:"?",id};
+  const isTripOwner = trip?.owner===me.id;
 
   const load=useCallback(async()=>{
     try{
@@ -421,6 +651,11 @@ function TripScreen({tripId,me,toast}){
     });
     return g;
   },[shown]);
+  const mySplitByExpense=useMemo(()=>{
+    const out={};
+    splits.forEach(s=>{ if(s.user===me.id) out[s.expense]=s.amount; });
+    return out;
+  },[splits,me.id]);
 
   if(!trip) return <><div style={{height:20}}/><div className="skl" style={{height:120}}/><div className="skl"/><div className="skl"/></>;
 
@@ -470,7 +705,7 @@ function TripScreen({tripId,me,toast}){
           {g.items.map((e,i)=>{
             const d=new Date(e.date||e.created);
             const foreign=normCur(e.currency||base)!==base;
-            const mine=splits.find(s=>s.expense===e.id&&s.user===me.id)?.amount||0;
+            const mine=mySplitByExpense[e.id]||0;
             const lent=e.paid_by===me.id?r2(baseAmt(e)-mine):-mine;
             return <button key={e.id} className="rrow anim" style={{animationDelay:`${i*35}ms`}}
               onClick={()=>setSheet({type:"detail",id:e.id})}>
@@ -548,8 +783,9 @@ function TripScreen({tripId,me,toast}){
                 <div className="rsub">{niceDate(s.date||s.created)}{s.notes?` · ${s.notes}`:""}</div>
               </div>
               <span className="ramt mut">{fmt(s.amount,base)}</span>
-              <button className="iconbtn" title="Delete payment" style={{width:34,height:34,fontSize:13}}
-                onClick={()=>setSheet({type:"delpay",rec:s})}>🗑</button>
+              {(isTripOwner||s.from===me.id||s.to===me.id) &&
+                <button className="iconbtn" title="Delete payment" style={{width:34,height:34,fontSize:13}}
+                  onClick={()=>setSheet({type:"delpay",rec:s})}>🗑</button>}
             </div>)}
         </div>
       </>}
@@ -636,6 +872,7 @@ function TripScreen({tripId,me,toast}){
       const e=expenses.find(x=>x.id===sheet.id);
       return e ? <ExpenseDetail expense={e} splits={splits.filter(s=>s.expense===e.id)}
         activity={activity} me={me} base={base} uById={uById} trip={trip} toast={toast}
+        canManage={isTripOwner||e.paid_by===me.id}
         onEdit={()=>setSheet({type:"edit",id:e.id})}
         onDelete={()=>setSheet({type:"delexp",rec:e})}
         onClose={()=>setSheet(null)} onRefresh={load}/> : null;
@@ -725,7 +962,7 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
   }
 
   function validate(){
-    if(!f.description.trim())return"Add a description";
+    if(!cleanText(f.description, MAX_LEN.description))return"Add a description";
     if(amt<=0)return"Amount must be more than zero";
     if(foreign&&(!rateNum||rateNum<=0))return"Enter the exchange rate";
     if(among.length===0)return"Pick at least one person";
@@ -737,11 +974,13 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
 
   async function save(){
     const err=validate(); if(err)return toast(err);
+    const description = cleanText(f.description, MAX_LEN.description);
+    const notes = cleanText(f.notes, MAX_LEN.notes);
     setBusy(true);
     try{
-      const data={trip:trip.id,description:f.description.trim(),amount:amt,paid_by:f.paid_by,
+      const data={trip:trip.id,description,amount:amt,paid_by:f.paid_by,
         currency:cur,fx_rate:foreign?rateNum:1,base_amount:baseTotal,
-        date:new Date(f.date+"T12:00:00").toISOString(),category:f.category,notes:f.notes.trim(),split_mode:mode};
+        date:new Date(f.date+"T12:00:00").toISOString(),category:f.category,notes,split_mode:mode};
       let e;
       if(editing){
         e=await col("expenses").update(expense.id,data);
@@ -750,8 +989,9 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
         e=await col("expenses").create(data);
       }
       await Promise.all(buildSplits().map(s=>col("splits").create({expense:e.id,...s})));
+      track(editing ? "expense_edited" : "expense_added", { splitMode: mode, foreign });
       logActivity(trip.id,me.id,editing?"expense_edited":"expense_added",
-        `${editing?"edited":"added"} “${f.description.trim()}” (${fmt(baseTotal,base)}${foreign?` · ${fmt(amt,cur)}`:""})`);
+        `${editing?"edited":"added"} “${description}” (${fmt(baseTotal,base)}${foreign?` · ${fmt(amt,cur)}`:""})`);
       onDone();
     }catch(e){ toast(e?.data?.message||e.message); }
     setBusy(false);
@@ -761,7 +1001,8 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
 
   return <Sheet title={editing?"Edit expense":"Add expense"} onClose={onClose}>
     <label>Description</label>
-    <input value={f.description} onChange={e=>setF({...f,description:e.target.value})}
+    <input value={f.description} maxLength={MAX_LEN.description}
+      onChange={e=>setF({...f,description:e.target.value})}
       placeholder="Dinner at the shack" autoFocus={!editing}/>
     <label>Currency</label>
     <div className="chips scrollx">
@@ -843,7 +1084,8 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
     </div>}
 
     <label>Notes (optional)</label>
-    <input value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="Anything worth remembering"/>
+    <input value={f.notes} maxLength={MAX_LEN.notes}
+      onChange={e=>setF({...f,notes:e.target.value})} placeholder="Anything worth remembering"/>
 
     <button className="btn" style={{marginTop:22}} disabled={busy||rateBusy} onClick={save}>
       {busy?"Saving…":(editing?"Save changes":"Add expense")}</button>
@@ -851,7 +1093,7 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
 }
 
 /* ================= expense detail ================= */
-function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,onEdit,onDelete,onClose,onRefresh}){
+function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,canManage,onEdit,onDelete,onClose,onRefresh}){
   const [comment,setComment]=useState(""); const [busy,setBusy]=useState(false);
   const ecur=normCur(e.currency||base);
   const foreign=ecur!==base;
@@ -860,11 +1102,12 @@ function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,onEdi
     try{ return JSON.parse(a.detail).expense===e.id; }catch{ return false; }
   });
   async function addComment(){
-    if(!comment.trim())return;
+    const text = cleanText(comment, MAX_LEN.comment);
+    if(!text)return;
     setBusy(true);
     try{
       await col("activity").create({trip:trip.id,actor:me.id,action:"comment",
-        detail:JSON.stringify({expense:e.id,text:comment.trim()})});
+        detail:JSON.stringify({expense:e.id,text})});
       setComment(""); onRefresh();
     }catch(err){ toast(err.message); }
     setBusy(false);
@@ -903,15 +1146,18 @@ function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,onEdi
           </div>
         </div>;})}
       <div className="stack" style={{padding:"10px 0"}}>
-        <input placeholder="Add a comment…" value={comment} onChange={ev=>setComment(ev.target.value)}
+        <input placeholder="Add a comment…" maxLength={MAX_LEN.comment}
+          value={comment} onChange={ev=>setComment(ev.target.value)}
           onKeyDown={ev=>ev.key==="Enter"&&addComment()}/>
         <button className="btn sm" disabled={busy||!comment.trim()} onClick={addComment}>Post</button>
       </div>
     </div>
-    <div className="grid2" style={{marginTop:16}}>
-      <button className="btn ghost" onClick={onEdit}>✏️ Edit</button>
-      <button className="btn danger" onClick={onDelete}>🗑 Delete</button>
-    </div>
+    {canManage
+      ? <div className="grid2" style={{marginTop:16}}>
+          <button className="btn ghost" onClick={onEdit}>✏️ Edit</button>
+          <button className="btn danger" onClick={onDelete}>🗑 Delete</button>
+        </div>
+      : <p className="sub" style={{marginTop:14}}>Only the payer or trip owner can edit or delete this expense.</p>}
   </Sheet>;
 }
 
@@ -928,10 +1174,11 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
     const a=parseFloat(amount);
     if(!a||a<=0)return toast("Enter a valid amount");
     if(from===to)return toast("Payer and receiver must differ");
+    const safeNotes = cleanText(notes, MAX_LEN.notes);
     setBusy(true);
     try{
       await col("settlements").create({trip:trip.id,from,to,amount:r2(a),
-        date:new Date(date+"T12:00:00").toISOString(),notes:notes.trim()});
+        date:new Date(date+"T12:00:00").toISOString(),notes:safeNotes});
       logActivity(trip.id,me.id,"payment_added",
         `recorded ${first(uById(from).name)} → ${first(uById(to).name)} (${fmt(a,base)})`);
       onDone();
@@ -956,7 +1203,8 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
         <input type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>
     </div>
     <label>Notes (optional)</label>
-    <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="GPay / cash / UPI ref…"/>
+    <input value={notes} maxLength={MAX_LEN.notes}
+      onChange={e=>setNotes(e.target.value)} placeholder="Bank transfer / cash / ref…"/>
     <button className="btn" style={{marginTop:22}} disabled={busy} onClick={save}>
       {busy?"Saving…":"Record payment"}</button>
   </Sheet>;
@@ -964,7 +1212,7 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
 
 /* ================= members & trip settings ================= */
 function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
-  const [email,setEmail]=useState(""); const [busy,setBusy]=useState(false);
+  const [memberId,setMemberId]=useState(""); const [busy,setBusy]=useState(false);
   const [name,setName]=useState(trip.name);
   const [currency,setCurrency]=useState(normCur(trip.currency));
   const [confirmDel,setConfirmDel]=useState(false);
@@ -972,15 +1220,17 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
   const curLocked=expenseCount>0;
 
   async function add(){
-    if(!email.trim())return;
+    if(!isOwner)return;
+    const id = cleanText(memberId, 40).toLowerCase();
+    if(!id)return;
     setBusy(true);
     try{
-      const u=await col("users").getFirstListItem(`email="${email.trim().toLowerCase()}"`);
+      const u=await col("users").getOne(id);
       if(members.some(m=>m.id===u.id)){toast("Already in this trip");setBusy(false);return;}
       await col("trips").update(trip.id,{"members+":u.id});
       logActivity(trip.id,me.id,"member_added",`added ${u.name} to the trip`);
-      setEmail(""); onDone(); toast(`Added ${u.name}`);
-    }catch(e){ toast(e.status===404?"No account with that email":(e.message)); }
+      setMemberId(""); onDone(); toast(`Added ${u.name}`);
+    }catch(e){ toast(e.status===404?"No user found with that member ID":(e.message)); }
     setBusy(false);
   }
   async function remove(id){
@@ -988,8 +1238,10 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
     catch(e){ toast(e.message); }
   }
   async function saveSettings(){
+    const safeName = cleanText(name, MAX_LEN.tripName);
+    if(!safeName)return toast("Trip name cannot be empty");
     try{
-      await col("trips").update(trip.id,{name:name.trim()||trip.name,
+      await col("trips").update(trip.id,{name:safeName,
         ...(curLocked?{}:{currency})});
       onDone(); toast("Trip updated");
     }catch(e){ toast(e.message); }
@@ -1008,24 +1260,30 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
           {isOwner&&m.id!==trip.owner&&
             <button className="btn sm danger" onClick={()=>remove(m.id)}>Remove</button>}
         </div>)}
-      <div className="stack" style={{padding:"10px 0"}}>
-        <input type="email" inputMode="email" value={email} onChange={e=>setEmail(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Add by email…"/>
-        <button className="btn sm" disabled={busy||!email.trim()} onClick={add}>Add</button>
-      </div>
+      {isOwner
+        ? <div className="stack" style={{padding:"10px 0"}}>
+            <input value={memberId} onChange={e=>setMemberId(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Add by member ID…"/>
+            <button className="btn sm" disabled={busy||!memberId.trim()} onClick={add}>Add</button>
+          </div>
+        : <p className="sub" style={{padding:"10px 0"}}>Only the trip owner can add or remove members.</p>}
+      {isOwner && <p className="sub" style={{paddingBottom:8}}>Ask the person to copy their member ID from the home screen.</p>}
     </div>
 
     <h3 className="h3">Details</h3>
     <div className="card">
       <label style={{marginTop:0}}>Trip name</label>
-      <input value={name} onChange={e=>setName(e.target.value)}/>
+      <input value={name} maxLength={MAX_LEN.tripName} disabled={!isOwner}
+        onChange={e=>setName(e.target.value)}/>
       <label>Base currency{curLocked?" (locked — trip has expenses)":""}</label>
-      <div className="chips" style={curLocked?{opacity:.5,pointerEvents:"none"}:null}>
+      <div className="chips" style={(curLocked||!isOwner)?{opacity:.5,pointerEvents:"none"}:null}>
         {CURRENCIES.map(c=>
           <button key={c.code} className={"chip"+(currency===c.code?" on":"")}
             onClick={()=>setCurrency(c.code)}>{c.sym.trim()} {c.code}</button>)}
       </div>
-      <button className="btn ghost" style={{marginTop:16}} onClick={saveSettings}>Save details</button>
+      {isOwner
+        ? <button className="btn ghost" style={{marginTop:16}} onClick={saveSettings}>Save details</button>
+        : <p className="sub" style={{marginTop:14}}>Only the trip owner can update trip details.</p>}
     </div>
 
     {isOwner && <button className="btn danger" style={{marginTop:6}}
@@ -1043,23 +1301,44 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
 /* ================= app root ================= */
 function App(){
   const hash=useHash();
+  const verificationContext = useMemo(()=>verificationContextFromHash(hash),[hash]);
   const [,force]=useState(0);
   const [ready,setReady]=useState(false);
   const [toastMsg,setToastMsg]=useState("");
   const toast=useCallback(m=>{setToastMsg(String(m));setTimeout(()=>setToastMsg(""),2800)},[]);
   useEffect(()=>pb.authStore.onChange(()=>force(x=>x+1)),[]);
+  useEffect(()=>{
+    const onErr = ev => reportError(ev.error || ev.message, "window.error");
+    const onRej = ev => reportError(ev.reason, "window.unhandledrejection");
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    track("app_loaded", { app: APP_NAME });
+    return ()=>{
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  },[]);
 
   // validate any persisted session against OUR auth collection (the PB instance hosts several apps)
   useEffect(()=>{(async()=>{
     if(pb.authStore.isValid){
       const rec=pb.authStore.record;
       if(!rec||rec.collectionName!==PREFIX+"users"){ pb.authStore.clear(); }
-      else{ col("users").authRefresh().catch(e=>{ if(e?.status===401||e?.status===403||e?.status===404)pb.authStore.clear(); }); }
+      else{
+        try{
+          await col("users").authRefresh();
+          if (REQUIRE_EMAIL_VERIFICATION && pb.authStore.record?.verified !== true) pb.authStore.clear();
+        }catch(e){
+          if(e?.status===401||e?.status===403||e?.status===404)pb.authStore.clear();
+        }
+      }
     }
     setReady(true);
   })()},[]);
 
   if(!ready) return <div className="center"><div className="skl" style={{height:100}}/></div>;
+  if(verificationContext.token)
+    return <><VerifyEmailScreen token={verificationContext.token} emailHint={verificationContext.email}/><Toast msg={toastMsg}/></>;
   if(!pb.authStore.isValid)
     return <><AuthScreen onAuth={()=>force(x=>x+1)} toast={toast}/><Toast msg={toastMsg}/></>;
   const me=pb.authStore.record;

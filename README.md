@@ -1,22 +1,22 @@
 # split·it
 
-Splitwise-style trip expense splitter for the MAL26 crew. Static site — React 18 UMD + PocketBase JS SDK from CDN, JSX **precompiled** to `app.js` (no runtime Babel). Hosted on GitHub Pages, mobile-first, installable to the home screen.
+Splitwise-style trip expense splitter for groups of any size. Static site — React 18 UMD + PocketBase JS SDK from CDN, JSX **precompiled** to `app.js` (no runtime Babel). Hosted on GitHub Pages, mobile-first, installable to the home screen.
 
 ```
 GitHub Pages (index.html + app.js + manifest/icons, static)
         │  HTTPS + PocketBase JS SDK (+ realtime SSE)     │ open.er-api.com (daily FX rates)
         ▼                                                  ▼
-PocketBase @ db.prasannar.com   (shared instance — collections prefixed splitit_)
+PocketBase (self-hosted or managed)   (collections prefixed splitit_ by default)
    splitit_users | splitit_trips | splitit_expenses | splitit_splits | splitit_settlements | splitit_activity
 ```
 
 ## Features
 
-- **Profile-picker sign-in** for the crew (Prasanna, Chinna, Sabari, Lokesh, Dinesh) + email fallback. Accounts are provisioned by the PB admin only — no open registration.
-- **Trips** — per-trip **base currency** (ISO code; balances are kept in it), add members by email, rename, delete (owner). Base currency locks once the trip has expenses.
+- **Flexible sign-in UX** — optional profile-picker (runtime-configurable) plus email sign-in and self-signup with email verification.
+- **Trips** — per-trip **base currency** (ISO code; balances are kept in it), add members by member ID, rename, delete (owner). Base currency locks once the trip has expenses.
 - **Multi-currency expenses** — enter any expense in INR, MYR, SGD, THB, USD, EUR, GBP, AED, JPY, IDR, VND or LKR. The daily mid-market rate is fetched automatically (cached per day, editable if you exchanged at a different rate); the original amount, rate, and converted base amount are all stored and shown.
 - **Four split modes** — equally, exact amounts (in the entry currency), percentages, shares — with live per-person preview in base currency and rounding that always sums exactly.
-- **Edit + delete** any expense; detail sheet with split breakdown, FX info and **comments**.
+- **Scoped edits/deletes** — only payer or trip owner can edit/delete an expense; payment delete is limited to payer/receiver/owner.
 - **Balances** — per-member net with bars, **debt simplification**, one-tap Settle prefill, manual payments, payment history with delete.
 - **Totals** — trip spend, per-head average, you-paid vs your-share, category breakdown, who-paid-what, **CSV export** (with currency, rate, and base columns).
 - **Activity feed**, **realtime sync** (PB SSE), search + category filter, monthly grouping.
@@ -32,7 +32,51 @@ node build.mjs     # compiles app.jsx -> app.js
 
 Edit `app.jsx` (never `app.js`), rebuild, and bump the `app.js?v=N` query in `index.html` so clients pick up the new file.
 
-Config at the top of `app.jsx`: `PB_URL`, `PREFIX` (`splitit_`), `ROSTER` (login-screen profiles), `CURRENCIES`.
+## Runtime config (public deployments)
+
+Set `window.SPLITIT_CONFIG` in `index.html` before loading `app.js`:
+
+```html
+<script>
+        window.SPLITIT_CONFIG = {
+                appName: "split·it",
+                tagline: "Split trips, not friendships.",
+                pocketbaseUrl: "https://your-pocketbase.example.com",
+                collectionPrefix: "splitit_",
+                defaultCurrency: "INR",
+                allowEmailSignin: true,
+                allowSelfSignup: true,
+                requireEmailVerification: true,
+                roster: []
+        };
+</script>
+```
+
+- `roster`: Optional profile-picker list: `[{ name, email }]`. Keep `[]` for generic public login.
+- `allowSelfSignup`: Enables account creation in the login screen. Default is `true` in this repo.
+- `requireEmailVerification`: If `true`, signup sends verification email and blocks login until verified.
+- `collectionPrefix`: Useful when sharing one PB instance with multiple apps.
+- `defaultCurrency`: The default for new trips.
+
+### Observability hooks
+
+The app emits browser events and tries common providers if present:
+
+- Custom event: `window` event `splitit:event` with `{ event, props, at }`
+- Product analytics: calls `window.plausible(...)` and/or `window.gtag(...)` when available
+- Error tracking: calls `window.Sentry.captureException(...)` when available
+
+## Public launch checklist
+
+- PocketBase must allow user creation in `splitit_users`: set `createRule` to an empty string (`""`) for public signup.
+- Enforce verified-only login in `splitit_users` by setting `authRule` to `verified = true`.
+- In `splitit_users` verification email template, use `href="{APP_URL}/#/auth/confirm-verification/{TOKEN}"` (no `/_/` path) for static-hosted SPA deployments.
+- Prevent user-directory scraping by setting `splitit_users.listRule` to `id = @request.auth.id`.
+- Restrict trip metadata changes to owners only (`splitit_trips.updateRule = owner = @request.auth.id`).
+- Configure SMTP in PocketBase Settings so verification emails can be delivered.
+- Enforce **server-side** rate limiting at your edge/proxy (do not rely only on browser throttling).
+- Add CAPTCHA at the edge/auth gateway for login/signup endpoints if you expect abuse.
+- Keep automated backups at the server layer and test restore regularly.
 
 ## Multi-currency model
 
@@ -42,7 +86,7 @@ Each trip has a base currency. A foreign-currency expense stores `amount` + `cur
 
 Live schema in [`pb_schema.json`](pb_schema.json) (PB 0.23+ format) — import via Dashboard → Settings → Import collections. Notes:
 
-- `splitit_users` is a dedicated auth collection (shared PB instance serves several apps; everything here is prefixed `splitit_`). Its `createRule` is locked — create accounts from the Dashboard with `emailVisibility: true`.
+- `splitit_users` is a dedicated auth collection (shared PB instance serves several apps; everything here is prefixed `splitit_`). Public signup is enabled by `createRule: ""`, directory listing is restricted by `listRule: "id = @request.auth.id"`, and verified-only auth uses `authRule: "verified = true"`.
 - `created`/`updated` are explicit `autodate` fields — PB 0.23+ doesn't add them automatically to API-created collections.
 - Trip data is visible/editable only to the trip's owner + members; activity is append-only for members.
 

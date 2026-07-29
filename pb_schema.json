@@ -1,9 +1,9 @@
 [
     {
         "id":  "pbc_2865406579",
-        "listRule":  "@request.auth.collectionName = \"splitit_users\"",
+        "listRule":  "id = @request.auth.id",
         "viewRule":  "@request.auth.collectionName = \"splitit_users\"",
-        "createRule":  null,
+        "createRule":  "",
         "updateRule":  "id = @request.auth.id",
         "deleteRule":  null,
         "name":  "splitit_users",
@@ -128,7 +128,7 @@
         "created":  "2026-07-13 15:43:05.779Z",
         "updated":  "2026-07-13 16:13:47.897Z",
         "system":  false,
-        "authRule":  "",
+        "authRule":  "verified = true",
         "manageRule":  null,
         "authAlert":  {
                           "enabled":  true,
@@ -186,7 +186,7 @@
                       },
         "verificationTemplate":  {
                                      "subject":  "Verify your {APP_NAME} email",
-                                     "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eThank you for joining us at {APP_NAME}.\u003c/p\u003e\n\u003cp\u003eClick on the button below to verify your email address.\u003c/p\u003e\n\u003cp\u003e\n  \u003ca class=\"btn\" href=\"{APP_URL}/_/#/auth/confirm-verification/{TOKEN}\" target=\"_blank\" rel=\"noopener\"\u003eVerify\u003c/a\u003e\n\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
+                                     "body":  "\u003cp\u003eHello,\u003c/p\u003e\n\u003cp\u003eThank you for joining us at {APP_NAME}.\u003c/p\u003e\n\u003cp\u003eClick on the button below to verify your email address.\u003c/p\u003e\n\u003cp\u003e\n  \u003ca class=\"btn\" href=\"{APP_URL}/#/auth/confirm-verification/{TOKEN}\" target=\"_blank\" rel=\"noopener\"\u003eVerify\u003c/a\u003e\n\u003c/p\u003e\n\u003cp\u003e\n  Thanks,\u003cbr/\u003e\n  {APP_NAME} team\n\u003c/p\u003e"
                                  },
         "resetPasswordTemplate":  {
                                       "subject":  "Reset your {APP_NAME} password",
@@ -202,7 +202,7 @@
         "listRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
         "viewRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
         "createRule":  "@request.auth.collectionName = \"splitit_users\" \u0026\u0026 owner = @request.auth.id",
-        "updateRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
+        "updateRule":  "owner = @request.auth.id",
         "deleteRule":  "owner = @request.auth.id",
         "name":  "splitit_trips",
         "type":  "base",
@@ -313,8 +313,8 @@
         "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
-        "updateRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
-        "deleteRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "updateRule":  "trip.owner = @request.auth.id || paid_by = @request.auth.id",
+        "deleteRule":  "trip.owner = @request.auth.id || paid_by = @request.auth.id",
         "name":  "splitit_expenses",
         "type":  "base",
         "fields":  [
@@ -519,9 +519,9 @@
         "id":  "pbc_3997417623",
         "listRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
         "viewRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
-        "createRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
-        "updateRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
-        "deleteRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id",
+        "createRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
+        "updateRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
+        "deleteRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
         "name":  "splitit_splits",
         "type":  "base",
         "fields":  [
@@ -627,8 +627,8 @@
         "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
-        "updateRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
-        "deleteRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "updateRule":  "trip.owner = @request.auth.id || from = @request.auth.id || to = @request.auth.id",
+        "deleteRule":  "trip.owner = @request.auth.id || from = @request.auth.id || to = @request.auth.id",
         "name":  "splitit_settlements",
         "type":  "base",
         "fields":  [
@@ -761,7 +761,7 @@
         "id":  "pbc_3131214181",
         "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
-        "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "createRule":  "actor = @request.auth.id && (trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id)",
         "updateRule":  null,
         "deleteRule":  null,
         "name":  "splitit_activity",

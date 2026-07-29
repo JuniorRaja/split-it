@@ -6,27 +6,36 @@ const {
   useCallback,
   useRef
 } = React;
-const PB_URL = "https://db.prasannar.com";
-const PREFIX = "splitit_";
+const APP_CONFIG = (() => {
+  const src = window.SPLITIT_CONFIG || {};
+  const roster = Array.isArray(src.roster) ? src.roster : [];
+  return {
+    appName: String(src.appName || "split·it").trim() || "split·it",
+    tagline: String(src.tagline || "Split trips, not friendships.").trim() || "Split trips, not friendships.",
+    pocketbaseUrl: String(src.pocketbaseUrl || "https://db.prasannar.com").trim() || "https://db.prasannar.com",
+    collectionPrefix: String(src.collectionPrefix || "splitit_").trim() || "splitit_",
+    defaultCurrency: String(src.defaultCurrency || "INR").trim().toUpperCase() || "INR",
+    allowEmailSignin: src.allowEmailSignin !== false,
+    allowSelfSignup: src.allowSelfSignup === true,
+    requireEmailVerification: src.requireEmailVerification !== false,
+    roster
+  };
+})();
+const APP_NAME = APP_CONFIG.appName;
+const APP_TAGLINE = APP_CONFIG.tagline;
+const PB_URL = APP_CONFIG.pocketbaseUrl;
+const PREFIX = APP_CONFIG.collectionPrefix;
 const pb = new PocketBase(PB_URL);
 pb.autoCancellation(false);
 const col = name => pb.collection(PREFIX + name);
-const ROSTER = [{
-  name: "Prasanna",
-  email: "prasanna@prasannar.com"
-}, {
-  name: "Chinna",
-  email: "chinna@prasannar.com"
-}, {
-  name: "Sabari",
-  email: "sabari@prasannar.com"
-}, {
-  name: "Lokesh",
-  email: "lokesh@prasannar.com"
-}, {
-  name: "Dinesh",
-  email: "dinesh@prasannar.com"
-}];
+const ROSTER = APP_CONFIG.roster.map(u => ({
+  name: String(u?.name || "").trim(),
+  email: String(u?.email || "").trim().toLowerCase()
+})).filter(u => u.name && u.email);
+const HAS_ROSTER = ROSTER.length > 0;
+const EMAIL_SIGNIN_ENABLED = APP_CONFIG.allowEmailSignin || !HAS_ROSTER;
+const SELF_SIGNUP_ENABLED = APP_CONFIG.allowSelfSignup;
+const REQUIRE_EMAIL_VERIFICATION = APP_CONFIG.requireEmailVerification;
 const CATEGORIES = [{
   key: "food",
   label: "Food",
@@ -130,6 +139,7 @@ const CURRENCIES = [{
   dec: 2,
   name: "Sri Lankan Rupee"
 }];
+const DEFAULT_CURRENCY = CURRENCIES.some(c => c.code === APP_CONFIG.defaultCurrency) ? APP_CONFIG.defaultCurrency : "INR";
 const SYM2CODE = {
   "₹": "INR",
   "$": "USD",
@@ -190,6 +200,19 @@ const AV_COLORS = ["#0E9F6E", "#B3492F", "#8C6D1F", "#3E5C76", "#6D4C7D", "#2F6D
 const initials = (n = "?") => n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
 const avColor = (id = "") => AV_COLORS[[...id].reduce((a, c) => a + c.charCodeAt(0), 0) % AV_COLORS.length];
 const r2 = n => Math.round(n * 100) / 100;
+const MAX_LEN = {
+  tripName: 72,
+  description: 120,
+  notes: 280,
+  comment: 300
+};
+const cleanText = (v, max) => String(v || "").replace(/\s+/g, " ").trim().slice(0, max);
+const cleanEmail = v => String(v || "").trim().toLowerCase().slice(0, 200);
+const AUTH_GUARD_KEY = "si_auth_guard";
+const AUTH_PREFILL_EMAIL_KEY = "si_auth_prefill_email";
+const AUTH_FAIL_LIMIT = 6;
+const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_LOCK_MS = 8 * 60 * 1000;
 const today = () => {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -213,6 +236,141 @@ function timeAgo(d) {
   return niceDate(d);
 }
 const first = n => (n || "?").split(" ")[0];
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch {
+      return false;
+    }
+  }
+}
+function track(event, props = {}) {
+  try {
+    const detail = {
+      event,
+      props,
+      at: new Date().toISOString()
+    };
+    window.dispatchEvent(new CustomEvent("splitit:event", {
+      detail
+    }));
+    if (typeof window.plausible === "function") window.plausible(event, {
+      props
+    });
+    if (typeof window.gtag === "function") window.gtag("event", event, props);
+  } catch {}
+}
+function reportError(err, context = "runtime") {
+  try {
+    const error = err instanceof Error ? err : new Error(String(err || "Unknown error"));
+    if (window.Sentry?.captureException) window.Sentry.captureException(error, {
+      tags: {
+        context
+      }
+    });
+    track("client_error", {
+      context,
+      message: error.message.slice(0, 240)
+    });
+  } catch {}
+}
+function authGuardState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AUTH_GUARD_KEY) || "{}");
+    return {
+      count: Number(raw.count) || 0,
+      firstFailAt: Number(raw.firstFailAt) || 0,
+      lockedUntil: Number(raw.lockedUntil) || 0
+    };
+  } catch {
+    return {
+      count: 0,
+      firstFailAt: 0,
+      lockedUntil: 0
+    };
+  }
+}
+function saveAuthGuard(next) {
+  try {
+    localStorage.setItem(AUTH_GUARD_KEY, JSON.stringify(next));
+  } catch {}
+}
+function canAttemptAuth() {
+  const s = authGuardState();
+  const now = Date.now();
+  if (s.lockedUntil > now) {
+    return {
+      ok: false,
+      waitSec: Math.ceil((s.lockedUntil - now) / 1000)
+    };
+  }
+  if (now - s.firstFailAt > AUTH_WINDOW_MS) {
+    saveAuthGuard({
+      count: 0,
+      firstFailAt: 0,
+      lockedUntil: 0
+    });
+    return {
+      ok: true,
+      waitSec: 0
+    };
+  }
+  return {
+    ok: true,
+    waitSec: 0
+  };
+}
+function markAuthFailure() {
+  const now = Date.now();
+  const s = authGuardState();
+  const withinWindow = s.firstFailAt && now - s.firstFailAt <= AUTH_WINDOW_MS;
+  const next = {
+    count: withinWindow ? s.count + 1 : 1,
+    firstFailAt: withinWindow ? s.firstFailAt : now,
+    lockedUntil: 0
+  };
+  if (next.count >= AUTH_FAIL_LIMIT) next.lockedUntil = now + AUTH_LOCK_MS;
+  saveAuthGuard(next);
+}
+function clearAuthGuard() {
+  saveAuthGuard({
+    count: 0,
+    firstFailAt: 0,
+    lockedUntil: 0
+  });
+}
+function setAuthPrefillEmail(email) {
+  const safe = cleanEmail(email);
+  if (!safe) return;
+  try {
+    localStorage.setItem(AUTH_PREFILL_EMAIL_KEY, safe);
+  } catch {}
+}
+function getAuthPrefillEmail() {
+  try {
+    return cleanEmail(localStorage.getItem(AUTH_PREFILL_EMAIL_KEY) || "");
+  } catch {
+    return "";
+  }
+}
+function clearAuthPrefillEmail() {
+  try {
+    localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY);
+  } catch {}
+}
 function distribute(total, weights) {
   const cents = Math.round(total * 100);
   const tw = weights.reduce((a, b) => a + b, 0) || 1;
@@ -278,11 +436,12 @@ function logActivity(trip, actor, action, detail) {
 function exportCSV(trip, expenses, splits, members) {
   const base = normCur(trip.currency);
   const uName = id => members.find(m => m.id === id)?.name || id;
+  const splitIdx = new Map(splits.map(s => [`${s.expense}:${s.user}`, s.amount]));
   const head = ["Date", "Description", "Category", "Paid by", "Currency", "Amount", "Rate", `Base (${base})`, ...members.map(m => m.name)];
   const rows = expenses.map(e => {
     const per = members.map(m => {
-      const s = splits.find(x => x.expense === e.id && x.user === m.id);
-      return s ? s.amount.toFixed(2) : "";
+      const amount = splitIdx.get(`${e.id}:${m.id}`);
+      return amount == null ? "" : Number(amount).toFixed(2);
     });
     return [e.date?.slice(0, 10) || "", e.description, catOf(e.category).label, uName(e.paid_by), normCur(e.currency || base), e.amount.toFixed(2), e.fx_rate || 1, baseAmt(e).toFixed(2), ...per];
   });
@@ -423,26 +582,106 @@ function useHash() {
   return h;
 }
 const go = h => window.location.hash = h;
+function verificationContextFromHash(hash) {
+  const h = String(hash || "");
+  const m = h.match(/^#\/auth\/confirm-verification\/([^/?#]+)(?:\?([^#]*))?/i) || h.match(/^#\/verify-email\/([^/?#]+)(?:\?([^#]*))?/i);
+  if (!m) return {
+    token: "",
+    email: ""
+  };
+  let token = m[1];
+  try {
+    token = decodeURIComponent(token);
+  } catch {}
+  const params = new URLSearchParams(m[2] || "");
+  const email = cleanEmail(params.get("email") || params.get("e") || "");
+  return {
+    token,
+    email
+  };
+}
 function AuthScreen({
   onAuth,
   toast
 }) {
-  const [sel, setSel] = useState(null);
-  const [emailMode, setEmailMode] = useState(false);
-  const [email, setEmail] = useState("");
+  const [signupMode, setSignupMode] = useState(false);
+  const [signupAllowed, setSignupAllowed] = useState(SELF_SIGNUP_ENABLED);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState(() => getAuthPrefillEmail());
   const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   async function submit() {
-    const id = emailMode ? email.trim() : sel?.email;
+    const guard = canAttemptAuth();
+    if (!guard.ok) {
+      const msg = `Too many attempts. Try again in ${Math.max(guard.waitSec, 1)}s.`;
+      setErr(msg);
+      toast(msg);
+      return;
+    }
+    const id = cleanEmail(email);
     if (!id || !pw) return;
     setErr("");
     setBusy(true);
     try {
+      if (signupMode) {
+        const safeName = cleanText(name, 64);
+        if (!safeName) throw new Error("Name is required");
+        if (pw.length < 8) throw new Error("Password must be at least 8 characters");
+        if (pw !== pw2) throw new Error("Passwords do not match");
+        await col("users").create({
+          name: safeName,
+          email: id,
+          password: pw,
+          passwordConfirm: pw2,
+          emailVisibility: true
+        });
+        if (REQUIRE_EMAIL_VERIFICATION) {
+          setAuthPrefillEmail(id);
+          await col("users").requestVerification(id);
+          clearAuthGuard();
+          setSignupMode(false);
+          setName("");
+          setPw("");
+          setPw2("");
+          const msg = "Account created. Check your email for a verification link before signing in.";
+          setErr(msg);
+          toast(msg);
+          track("signup_verification_requested", {
+            method: "email"
+          });
+          setBusy(false);
+          return;
+        }
+      }
       await col("users").authWithPassword(id, pw);
+      if (REQUIRE_EMAIL_VERIFICATION && pb.authStore.record?.verified !== true) {
+        pb.authStore.clear();
+        throw new Error("Your email is not verified yet. Please verify from the link in your inbox.");
+      }
+      clearAuthPrefillEmail();
+      clearAuthGuard();
+      track(signupMode ? "signup_success" : "signin_success", {
+        method: "password"
+      });
       onAuth();
     } catch (e) {
-      setErr(e?.status === 400 ? "Wrong password — try again." : e?.message || "Failed");
+      const signupBlocked = signupMode && e?.status === 403 && /only superusers can perform this action/i.test(String(e?.message || ""));
+      if (!signupBlocked) markAuthFailure();
+      track(signupMode ? "signup_failed" : "signin_failed", {
+        code: e?.status || "unknown"
+      });
+      if (signupBlocked) {
+        setSignupAllowed(false);
+        setSignupMode(false);
+        const msg = "Sign-up is disabled on this server. Sign in with an existing account, or ask the admin to enable splitit_users createRule.";
+        setErr(msg);
+        toast(msg);
+      } else {
+        const signInError = REQUIRE_EMAIL_VERIFICATION ? "Wrong email or password, or your email is not verified yet." : "Wrong email or password — try again.";
+        setErr(signupMode ? e?.data?.message || e?.message || "Couldn't create the account." : e?.status === 400 ? signInError : e?.message || "Failed");
+      }
     }
     setBusy(false);
   }
@@ -453,91 +692,117 @@ function AuthScreen({
     style: {
       fontSize: 38
     }
-  }, "split", React.createElement("b", {
-    style: {
-      color: "var(--green-ink)"
-    }
-  }, "\xB7it")), React.createElement("p", {
+  }, APP_NAME), React.createElement("p", {
     className: "sub"
-  }, "Split trips, not friendships. Every rupee accounted for."), !emailMode && React.createElement(React.Fragment, null, React.createElement("div", {
-    className: "profiles"
-  }, ROSTER.map((u, i) => React.createElement("button", {
-    key: u.email,
-    className: "profile anim" + (sel?.email === u.email ? " sel" : ""),
-    style: {
-      animationDelay: `${i * 50}ms`
-    },
-    onClick: () => {
-      setSel(u);
-      setErr("");
-    }
-  }, React.createElement(Avatar, {
-    user: {
-      id: u.email,
-      name: u.name
-    },
-    size: 52
-  }), u.name))), sel && React.createElement("div", {
-    className: "card anim-pop",
-    style: {
-      marginTop: 16
-    }
-  }, React.createElement("label", null, "Password for ", sel.name), React.createElement("input", {
-    type: "password",
-    autoFocus: true,
-    value: pw,
-    onChange: e => setPw(e.target.value),
-    onKeyDown: e => e.key === "Enter" && submit(),
-    placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
-  }), err && React.createElement("div", {
-    className: "err"
-  }, err), React.createElement("button", {
-    className: "btn",
-    style: {
-      marginTop: 16
-    },
-    disabled: busy || !pw,
-    onClick: submit
-  }, busy ? "Signing in…" : `Continue as ${sel.name}`))), emailMode && React.createElement("div", {
+  }, APP_TAGLINE, " Every cent accounted for."), React.createElement("div", {
     className: "card anim-pop",
     style: {
       marginTop: 20
     }
-  }, React.createElement("label", null, "Email"), React.createElement("input", {
+  }, signupMode && React.createElement(React.Fragment, null, React.createElement("label", null, "Full name"), React.createElement("input", {
+    value: name,
+    maxLength: 64,
+    onChange: e => setName(e.target.value),
+    placeholder: "Jane Doe",
+    autoFocus: true
+  })), React.createElement("label", null, "Email"), React.createElement("input", {
     type: "email",
     inputMode: "email",
     value: email,
     onChange: e => setEmail(e.target.value),
     placeholder: "you@mail.com",
-    autoFocus: true
+    autoFocus: !signupMode
   }), React.createElement("label", null, "Password"), React.createElement("input", {
     type: "password",
     value: pw,
     onChange: e => setPw(e.target.value),
     onKeyDown: e => e.key === "Enter" && submit(),
     placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
-  }), err && React.createElement("div", {
+  }), signupMode && React.createElement(React.Fragment, null, React.createElement("label", null, "Confirm password"), React.createElement("input", {
+    type: "password",
+    value: pw2,
+    onChange: e => setPw2(e.target.value),
+    onKeyDown: e => e.key === "Enter" && submit(),
+    placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+  })), err && React.createElement("div", {
     className: "err"
   }, err), React.createElement("button", {
     className: "btn",
     style: {
       marginTop: 16
     },
-    disabled: busy || !pw || !email,
+    disabled: busy || !pw || !email || signupMode && !name,
     onClick: submit
-  }, busy ? "Signing in…" : "Sign in")), React.createElement("p", {
+  }, busy ? signupMode ? "Creating account…" : "Signing in…" : signupMode ? "Create account" : "Sign in")), signupAllowed && React.createElement("p", {
     className: "sub",
     style: {
       textAlign: "center",
-      marginTop: 18
+      marginTop: 12
     }
   }, React.createElement("a", {
     onClick: () => {
-      setEmailMode(!emailMode);
-      setSel(null);
+      setSignupMode(!signupMode);
       setErr("");
     }
-  }, emailMode ? "← back to profiles" : "sign in with email instead")));
+  }, signupMode ? "Already have an account? Sign in" : "New here? Create an account")));
+}
+function VerifyEmailScreen({
+  token,
+  emailHint
+}) {
+  const [state, setState] = useState("loading");
+  const [msg, setMsg] = useState("Verifying your email…");
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        await col("users").confirmVerification(token);
+        if (!active) return;
+        const safeEmail = cleanEmail(emailHint) || getAuthPrefillEmail();
+        if (safeEmail) setAuthPrefillEmail(safeEmail);
+        setState("ok");
+        setMsg("Email verified. You can sign in now.");
+        track("email_verification_success");
+      } catch (e) {
+        if (!active) return;
+        setState("err");
+        setMsg(e?.data?.message || e?.message || "Verification failed or link expired.");
+        track("email_verification_failed", {
+          code: e?.status || "unknown"
+        });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+  return React.createElement("div", {
+    className: "center anim",
+    style: {
+      paddingTop: 40
+    }
+  }, React.createElement("h1", {
+    className: "disp",
+    style: {
+      fontSize: 34
+    }
+  }, APP_NAME), React.createElement("p", {
+    className: "sub",
+    style: {
+      marginTop: 12
+    }
+  }, msg), React.createElement("div", {
+    className: "card",
+    style: {
+      marginTop: 18
+    }
+  }, state === "ok" ? React.createElement("button", {
+    className: "btn",
+    onClick: () => go("#/")
+  }, "Continue to sign in") : React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => go("#/")
+  }, "Back to sign in")));
 }
 function TripsScreen({
   me,
@@ -547,7 +812,7 @@ function TripsScreen({
   const [show, setShow] = useState(false);
   const [f, setF] = useState({
     name: "",
-    currency: "INR"
+    currency: DEFAULT_CURRENCY
   });
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
@@ -566,19 +831,24 @@ function TripsScreen({
     load();
   }, [load]);
   async function create() {
-    if (!f.name.trim()) return;
+    const name = cleanText(f.name, MAX_LEN.tripName);
+    if (!name) return;
     setBusy(true);
     try {
       const t = await col("trips").create({
         ...f,
+        name,
         owner: me.id,
         members: [me.id]
+      });
+      track("trip_created", {
+        currency: f.currency
       });
       logActivity(t.id, me.id, "trip_created", `created trip “${t.name}”`);
       setShow(false);
       setF({
         name: "",
-        currency: "INR"
+        currency: DEFAULT_CURRENCY
       });
       go("#/trip/" + t.id);
     } catch (e) {
@@ -590,12 +860,16 @@ function TripsScreen({
     className: "topbar"
   }, React.createElement("span", {
     className: "wordmark"
-  }, "split", React.createElement("b", null, "\xB7it")), React.createElement("div", {
+  }, APP_NAME), React.createElement("div", {
     className: "stack"
   }, React.createElement(Avatar, {
     user: me,
     size: 34
   }), React.createElement("button", {
+    className: "iconbtn",
+    title: "Copy your member ID",
+    onClick: async () => toast((await copyText(me.id)) ? "Member ID copied" : "Couldn't copy member ID")
+  }, "\uD83C\uDD94"), React.createElement("button", {
     className: "iconbtn",
     title: "Sign out",
     onClick: () => {
@@ -660,11 +934,12 @@ function TripsScreen({
     onClose: () => setShow(false)
   }, React.createElement("label", null, "Trip name"), React.createElement("input", {
     value: f.name,
+    maxLength: MAX_LEN.tripName,
     onChange: e => setF({
       ...f,
       name: e.target.value
     }),
-    placeholder: "Goa 2027",
+    placeholder: "Weekend in Goa",
     autoFocus: true
   }), React.createElement("label", null, "Base currency (balances are kept in this)"), React.createElement("div", {
     className: "chips"
@@ -710,6 +985,7 @@ function TripScreen({
     name: "?",
     id
   };
+  const isTripOwner = trip?.owner === me.id;
   const load = useCallback(async () => {
     try {
       const [t, ex, sp, se, ac] = await Promise.all([col("trips").getOne(tripId, {
@@ -800,6 +1076,13 @@ function TripScreen({
     });
     return g;
   }, [shown]);
+  const mySplitByExpense = useMemo(() => {
+    const out = {};
+    splits.forEach(s => {
+      if (s.user === me.id) out[s.expense] = s.amount;
+    });
+    return out;
+  }, [splits, me.id]);
   if (!trip) return React.createElement(React.Fragment, null, React.createElement("div", {
     style: {
       height: 20
@@ -925,7 +1208,7 @@ function TripScreen({
   }, g.items.map((e, i) => {
     const d = new Date(e.date || e.created);
     const foreign = normCur(e.currency || base) !== base;
-    const mine = splits.find(s => s.expense === e.id && s.user === me.id)?.amount || 0;
+    const mine = mySplitByExpense[e.id] || 0;
     const lent = e.paid_by === me.id ? r2(baseAmt(e) - mine) : -mine;
     return React.createElement("button", {
       key: e.id,
@@ -1067,7 +1350,7 @@ function TripScreen({
     className: "rsub"
   }, niceDate(s.date || s.created), s.notes ? ` · ${s.notes}` : "")), React.createElement("span", {
     className: "ramt mut"
-  }, fmt(s.amount, base)), React.createElement("button", {
+  }, fmt(s.amount, base)), (isTripOwner || s.from === me.id || s.to === me.id) && React.createElement("button", {
     className: "iconbtn",
     title: "Delete payment",
     style: {
@@ -1279,6 +1562,7 @@ function TripScreen({
       uById: uById,
       trip: trip,
       toast: toast,
+      canManage: isTripOwner || e.paid_by === me.id,
       onEdit: () => setSheet({
         type: "edit",
         id: e.id
@@ -1432,7 +1716,7 @@ function ExpenseForm({
     }));
   }
   function validate() {
-    if (!f.description.trim()) return "Add a description";
+    if (!cleanText(f.description, MAX_LEN.description)) return "Add a description";
     if (amt <= 0) return "Amount must be more than zero";
     if (foreign && (!rateNum || rateNum <= 0)) return "Enter the exchange rate";
     if (among.length === 0) return "Pick at least one person";
@@ -1444,11 +1728,13 @@ function ExpenseForm({
   async function save() {
     const err = validate();
     if (err) return toast(err);
+    const description = cleanText(f.description, MAX_LEN.description);
+    const notes = cleanText(f.notes, MAX_LEN.notes);
     setBusy(true);
     try {
       const data = {
         trip: trip.id,
-        description: f.description.trim(),
+        description,
         amount: amt,
         paid_by: f.paid_by,
         currency: cur,
@@ -1456,7 +1742,7 @@ function ExpenseForm({
         base_amount: baseTotal,
         date: new Date(f.date + "T12:00:00").toISOString(),
         category: f.category,
-        notes: f.notes.trim(),
+        notes,
         split_mode: mode
       };
       let e;
@@ -1470,7 +1756,11 @@ function ExpenseForm({
         expense: e.id,
         ...s
       })));
-      logActivity(trip.id, me.id, editing ? "expense_edited" : "expense_added", `${editing ? "edited" : "added"} “${f.description.trim()}” (${fmt(baseTotal, base)}${foreign ? ` · ${fmt(amt, cur)}` : ""})`);
+      track(editing ? "expense_edited" : "expense_added", {
+        splitMode: mode,
+        foreign
+      });
+      logActivity(trip.id, me.id, editing ? "expense_edited" : "expense_added", `${editing ? "edited" : "added"} “${description}” (${fmt(baseTotal, base)}${foreign ? ` · ${fmt(amt, cur)}` : ""})`);
       onDone();
     } catch (e) {
       toast(e?.data?.message || e.message);
@@ -1483,6 +1773,7 @@ function ExpenseForm({
     onClose: onClose
   }, React.createElement("label", null, "Description"), React.createElement("input", {
     value: f.description,
+    maxLength: MAX_LEN.description,
     onChange: e => setF({
       ...f,
       description: e.target.value
@@ -1652,6 +1943,7 @@ function ExpenseForm({
     className: "sub"
   }, "Empty boxes count as 1 share.")), React.createElement("label", null, "Notes (optional)"), React.createElement("input", {
     value: f.notes,
+    maxLength: MAX_LEN.notes,
     onChange: e => setF({
       ...f,
       notes: e.target.value
@@ -1675,6 +1967,7 @@ function ExpenseDetail({
   uById,
   trip,
   toast,
+  canManage,
   onEdit,
   onDelete,
   onClose,
@@ -1693,7 +1986,8 @@ function ExpenseDetail({
     }
   });
   async function addComment() {
-    if (!comment.trim()) return;
+    const text = cleanText(comment, MAX_LEN.comment);
+    if (!text) return;
     setBusy(true);
     try {
       await col("activity").create({
@@ -1702,7 +1996,7 @@ function ExpenseDetail({
         action: "comment",
         detail: JSON.stringify({
           expense: e.id,
-          text: comment.trim()
+          text
         })
       });
       setComment("");
@@ -1800,6 +2094,7 @@ function ExpenseDetail({
     }
   }, React.createElement("input", {
     placeholder: "Add a comment\u2026",
+    maxLength: MAX_LEN.comment,
     value: comment,
     onChange: ev => setComment(ev.target.value),
     onKeyDown: ev => ev.key === "Enter" && addComment()
@@ -1807,7 +2102,7 @@ function ExpenseDetail({
     className: "btn sm",
     disabled: busy || !comment.trim(),
     onClick: addComment
-  }, "Post"))), React.createElement("div", {
+  }, "Post"))), canManage ? React.createElement("div", {
     className: "grid2",
     style: {
       marginTop: 16
@@ -1818,7 +2113,12 @@ function ExpenseDetail({
   }, "\u270F\uFE0F Edit"), React.createElement("button", {
     className: "btn danger",
     onClick: onDelete
-  }, "\uD83D\uDDD1 Delete")));
+  }, "\uD83D\uDDD1 Delete")) : React.createElement("p", {
+    className: "sub",
+    style: {
+      marginTop: 14
+    }
+  }, "Only the payer or trip owner can edit or delete this expense."));
 }
 function SettleForm({
   trip,
@@ -1841,6 +2141,7 @@ function SettleForm({
     const a = parseFloat(amount);
     if (!a || a <= 0) return toast("Enter a valid amount");
     if (from === to) return toast("Payer and receiver must differ");
+    const safeNotes = cleanText(notes, MAX_LEN.notes);
     setBusy(true);
     try {
       await col("settlements").create({
@@ -1849,7 +2150,7 @@ function SettleForm({
         to,
         amount: r2(a),
         date: new Date(date + "T12:00:00").toISOString(),
-        notes: notes.trim()
+        notes: safeNotes
       });
       logActivity(trip.id, me.id, "payment_added", `recorded ${first(uById(from).name)} → ${first(uById(to).name)} (${fmt(a, base)})`);
       onDone();
@@ -1893,8 +2194,9 @@ function SettleForm({
     onChange: e => setDate(e.target.value)
   }))), React.createElement("label", null, "Notes (optional)"), React.createElement("input", {
     value: notes,
+    maxLength: MAX_LEN.notes,
     onChange: e => setNotes(e.target.value),
-    placeholder: "GPay / cash / UPI ref\u2026"
+    placeholder: "Bank transfer / cash / ref\u2026"
   }), React.createElement("button", {
     className: "btn",
     style: {
@@ -1913,7 +2215,7 @@ function Members({
   onClose,
   toast
 }) {
-  const [email, setEmail] = useState("");
+  const [memberId, setMemberId] = useState("");
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState(trip.name);
   const [currency, setCurrency] = useState(normCur(trip.currency));
@@ -1921,10 +2223,12 @@ function Members({
   const isOwner = trip.owner === me.id;
   const curLocked = expenseCount > 0;
   async function add() {
-    if (!email.trim()) return;
+    if (!isOwner) return;
+    const id = cleanText(memberId, 40).toLowerCase();
+    if (!id) return;
     setBusy(true);
     try {
-      const u = await col("users").getFirstListItem(`email="${email.trim().toLowerCase()}"`);
+      const u = await col("users").getOne(id);
       if (members.some(m => m.id === u.id)) {
         toast("Already in this trip");
         setBusy(false);
@@ -1934,11 +2238,11 @@ function Members({
         "members+": u.id
       });
       logActivity(trip.id, me.id, "member_added", `added ${u.name} to the trip`);
-      setEmail("");
+      setMemberId("");
       onDone();
       toast(`Added ${u.name}`);
     } catch (e) {
-      toast(e.status === 404 ? "No account with that email" : e.message);
+      toast(e.status === 404 ? "No user found with that member ID" : e.message);
     }
     setBusy(false);
   }
@@ -1953,9 +2257,11 @@ function Members({
     }
   }
   async function saveSettings() {
+    const safeName = cleanText(name, MAX_LEN.tripName);
+    if (!safeName) return toast("Trip name cannot be empty");
     try {
       await col("trips").update(trip.id, {
-        name: name.trim() || trip.name,
+        name: safeName,
         ...(curLocked ? {} : {
           currency
         })
@@ -1997,23 +2303,31 @@ function Members({
   }, m.id === trip.owner ? "owner" : "member")), isOwner && m.id !== trip.owner && React.createElement("button", {
     className: "btn sm danger",
     onClick: () => remove(m.id)
-  }, "Remove"))), React.createElement("div", {
+  }, "Remove"))), isOwner ? React.createElement("div", {
     className: "stack",
     style: {
       padding: "10px 0"
     }
   }, React.createElement("input", {
-    type: "email",
-    inputMode: "email",
-    value: email,
-    onChange: e => setEmail(e.target.value),
+    value: memberId,
+    onChange: e => setMemberId(e.target.value),
     onKeyDown: e => e.key === "Enter" && add(),
-    placeholder: "Add by email\u2026"
+    placeholder: "Add by member ID\u2026"
   }), React.createElement("button", {
     className: "btn sm",
-    disabled: busy || !email.trim(),
+    disabled: busy || !memberId.trim(),
     onClick: add
-  }, "Add"))), React.createElement("h3", {
+  }, "Add")) : React.createElement("p", {
+    className: "sub",
+    style: {
+      padding: "10px 0"
+    }
+  }, "Only the trip owner can add or remove members."), isOwner && React.createElement("p", {
+    className: "sub",
+    style: {
+      paddingBottom: 8
+    }
+  }, "Ask the person to copy their member ID from the home screen.")), React.createElement("h3", {
     className: "h3"
   }, "Details"), React.createElement("div", {
     className: "card"
@@ -2023,10 +2337,12 @@ function Members({
     }
   }, "Trip name"), React.createElement("input", {
     value: name,
+    maxLength: MAX_LEN.tripName,
+    disabled: !isOwner,
     onChange: e => setName(e.target.value)
   }), React.createElement("label", null, "Base currency", curLocked ? " (locked — trip has expenses)" : ""), React.createElement("div", {
     className: "chips",
-    style: curLocked ? {
+    style: curLocked || !isOwner ? {
       opacity: .5,
       pointerEvents: "none"
     } : null
@@ -2034,13 +2350,18 @@ function Members({
     key: c.code,
     className: "chip" + (currency === c.code ? " on" : ""),
     onClick: () => setCurrency(c.code)
-  }, c.sym.trim(), " ", c.code))), React.createElement("button", {
+  }, c.sym.trim(), " ", c.code))), isOwner ? React.createElement("button", {
     className: "btn ghost",
     style: {
       marginTop: 16
     },
     onClick: saveSettings
-  }, "Save details")), isOwner && React.createElement("button", {
+  }, "Save details") : React.createElement("p", {
+    className: "sub",
+    style: {
+      marginTop: 14
+    }
+  }, "Only the trip owner can update trip details.")), isOwner && React.createElement("button", {
     className: "btn danger",
     style: {
       marginTop: 6
@@ -2062,6 +2383,7 @@ function Members({
 }
 function App() {
   const hash = useHash();
+  const verificationContext = useMemo(() => verificationContextFromHash(hash), [hash]);
   const [, force] = useState(0);
   const [ready, setReady] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
@@ -2071,15 +2393,31 @@ function App() {
   }, []);
   useEffect(() => pb.authStore.onChange(() => force(x => x + 1)), []);
   useEffect(() => {
+    const onErr = ev => reportError(ev.error || ev.message, "window.error");
+    const onRej = ev => reportError(ev.reason, "window.unhandledrejection");
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    track("app_loaded", {
+      app: APP_NAME
+    });
+    return () => {
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, []);
+  useEffect(() => {
     (async () => {
       if (pb.authStore.isValid) {
         const rec = pb.authStore.record;
         if (!rec || rec.collectionName !== PREFIX + "users") {
           pb.authStore.clear();
         } else {
-          col("users").authRefresh().catch(e => {
+          try {
+            await col("users").authRefresh();
+            if (REQUIRE_EMAIL_VERIFICATION && pb.authStore.record?.verified !== true) pb.authStore.clear();
+          } catch (e) {
             if (e?.status === 401 || e?.status === 403 || e?.status === 404) pb.authStore.clear();
-          });
+          }
         }
       }
       setReady(true);
@@ -2092,6 +2430,12 @@ function App() {
     style: {
       height: 100
     }
+  }));
+  if (verificationContext.token) return React.createElement(React.Fragment, null, React.createElement(VerifyEmailScreen, {
+    token: verificationContext.token,
+    emailHint: verificationContext.email
+  }), React.createElement(Toast, {
+    msg: toastMsg
   }));
   if (!pb.authStore.isValid) return React.createElement(React.Fragment, null, React.createElement(AuthScreen, {
     onAuth: () => force(x => x + 1),
