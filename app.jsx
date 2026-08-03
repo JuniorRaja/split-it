@@ -264,6 +264,38 @@ function simplify(net){
   return out;
 }
 
+function computePairwise(expenses,splits,settlements){
+  const debt={}; // debt[a][b] = a owes b
+  const ensure=(a,b)=>{
+    if(!debt[a])debt[a]={};
+    if(!debt[b])debt[b]={};
+    if(debt[a][b]==null)debt[a][b]=0;
+    if(debt[b][a]==null)debt[b][a]=0;
+  };
+  splits.forEach(s=>{
+    const exp=expenses.find(e=>e.id===s.expense);
+    if(!exp||exp.paid_by===s.user)return;
+    ensure(s.user,exp.paid_by);
+    debt[s.user][exp.paid_by]=r2(debt[s.user][exp.paid_by]+s.amount);
+  });
+  settlements.forEach(s=>{
+    ensure(s.from,s.to);
+    debt[s.to][s.from]=r2(debt[s.to][s.from]+s.amount);
+  });
+  const out=[];
+  const seen=new Set();
+  Object.keys(debt).forEach(a=>{
+    Object.keys(debt[a]).forEach(b=>{
+      const key=[a,b].sort().join("|");
+      if(seen.has(key))return; seen.add(key);
+      const net=r2((debt[a][b]||0)-(debt[b][a]||0));
+      if(net>0.009)out.push({from:a,to:b,amount:net});
+      else if(net<-0.009)out.push({from:b,to:a,amount:-net});
+    });
+  });
+  return out.sort((a,b)=>b.amount-a.amount);
+}
+
 function logActivity(trip,actor,action,detail){
   col("activity").create({trip,actor,action,detail}).catch(()=>{});
 }
@@ -749,6 +781,7 @@ function TripScreen({tripId,me,toast}){
   const [settlements,setSettlements]=useState(cached.settlements||[]);
   const [activity,setActivity]=useState(cached.activity||[]);
   const [tab,setTab]=useState("expenses");
+  const [settleMode,setSettleMode]=useState(()=>localStorage.getItem("ts_settle_mode")||"simplified");
   const [sheet,setSheet]=useState(null);
   const [q,setQ]=useState(""); const [qCat,setQCat]=useState("");
 
@@ -800,6 +833,10 @@ function TripScreen({tripId,me,toast}){
 
   const nets=useMemo(()=>computeNets(expenses,splits,settlements),[expenses,splits,settlements]);
   const suggestions=useMemo(()=>simplify(nets),[nets]);
+  const settleRows=useMemo(()=>settleMode==="simplified"
+    ?simplify(nets)
+    :computePairwise(expenses,splits,settlements)
+  ,[settleMode,nets,expenses,splits,settlements]);
   const total=useMemo(()=>r2(expenses.reduce((a,e)=>a+baseAmt(e),0)),[expenses]);
   const myPaid=useMemo(()=>r2(expenses.filter(e=>e.paid_by===me.id).reduce((a,e)=>a+baseAmt(e),0)),[expenses]);
   const myShare=useMemo(()=>r2(splits.filter(s=>s.user===me.id).reduce((a,s)=>a+s.amount,0)),[splits]);
@@ -917,26 +954,45 @@ function TripScreen({tripId,me,toast}){
         })}
       </div>
 
-      <h3 className="h3">Simplest way to settle</h3>
-      <div className="card">
-        {suggestions.length===0 && <div className="empty"><div className="big">🎉</div>Everyone is settled up.</div>}
-        {suggestions.map((s,i)=>
-          <div key={i} className="rrow anim" style={{animationDelay:`${i*40}ms`}}>
-            <span className="stack" style={{gap:6}}>
-              <Avatar user={uById(s.from)} size={30}/><span style={{color:"var(--mut)"}}>→</span>
-              <Avatar user={uById(s.to)} size={30}/>
-            </span>
-            <div className="rmain">
-              <div className="rtitle" style={{fontSize:14}}>{first(uById(s.from).name)} pays {first(uById(s.to).name)}</div>
-            </div>
-            <span className="ramt">{fmt(s.amount,base)}</span>
-            <button className="btn sm" onClick={()=>setSheet({type:"settle",from:s.from,to:s.to,amount:s.amount})}>
-              Settle</button>
-          </div>)}
-        {suggestions.length>0 &&
-          <button className="btn ghost" style={{marginTop:12}}
-            onClick={()=>setSheet({type:"settle"})}>Record a different payment</button>}
-      </div>
+      {(()=>{ return <>
+          <div className="tabs mini" style={{marginTop:18,marginBottom:4}}>
+            {[["simplified","Simplified"],["pairwise","Pairwise"]].map(([k,l])=>
+              <button key={k} className={settleMode===k?"on":""} onClick={()=>{
+                setSettleMode(k);
+                try{localStorage.setItem("ts_settle_mode",k)}catch{}
+              }}>{l}</button>)}
+          </div>
+          <p className="sub" style={{marginTop:2,marginBottom:8,fontSize:12.5}}>
+            {settleMode==="simplified"
+              ?"Fewest transfers. Debts rerouted, totals identical."
+              :"Actual debts per person, from expense history."}
+          </p>
+          <h3 className="h3">
+            {settleMode==="simplified"
+              ?`Simplest way to settle · ${settleRows.length} payment${settleRows.length!==1?"s":""}`
+              :`Who owes whom · ${settleRows.length} payment${settleRows.length!==1?"s":""}`}
+          </h3>
+          <div className="card">
+            {settleRows.length===0 && <div className="empty"><div className="big">🎉</div>Everyone is settled up.</div>}
+            {settleRows.map((s,i)=>
+              <div key={i} className="rrow anim" style={{animationDelay:`${i*40}ms`}}>
+                <span className="stack" style={{gap:6}}>
+                  <Avatar user={uById(s.from)} size={30}/><span style={{color:"var(--mut)"}}>→</span>
+                  <Avatar user={uById(s.to)} size={30}/>
+                </span>
+                <div className="rmain">
+                  <div className="rtitle" style={{fontSize:14}}>{first(uById(s.from).name)} pays {first(uById(s.to).name)}</div>
+                </div>
+                <span className="ramt">{fmt(s.amount,base)}</span>
+                <button className="btn sm" onClick={()=>setSheet({type:"settle",from:s.from,to:s.to,amount:s.amount})}>
+                  Settle</button>
+              </div>)}
+            {settleRows.length>0 &&
+              <button className="btn ghost" style={{marginTop:12}}
+                onClick={()=>setSheet({type:"settle"})}>Record a different payment</button>}
+          </div>
+      </>;
+      })()}
 
       {settlements.length>0 && <>
         <h3 className="h3">Payments recorded</h3>
