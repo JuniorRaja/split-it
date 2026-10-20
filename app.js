@@ -208,6 +208,8 @@ const MAX_LEN = {
 };
 const cleanText = (v, max) => String(v || "").replace(/\s+/g, " ").trim().slice(0, max);
 const cleanEmail = v => String(v || "").trim().toLowerCase().slice(0, 200);
+const randToken = () => Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
+const shareUrl = (tripId, token) => `${location.origin}${location.pathname}#/shared/${tripId}/${token}`;
 const AUTH_GUARD_KEY = "si_auth_guard";
 const AUTH_PREFILL_EMAIL_KEY = "si_auth_prefill_email";
 const AUTH_FAIL_LIMIT = 6;
@@ -1278,7 +1280,6 @@ function TripScreen({
     id
   };
   const isTripOwner = trip?.owner === me.id;
-  const amLinked = isTripOwner || members.some(m => m.id === me.id);
   const load = useCallback(async () => {
     try {
       const [t, ex, sp, se, ac] = await Promise.all([col("trips").getOne(tripId, {
@@ -1446,17 +1447,7 @@ function TripScreen({
       fontSize: 12.5,
       opacity: .85
     }
-  }, members.map(m => first(m.name)).join(" · ")))), !amLinked && React.createElement("div", {
-    className: "card anim",
-    style: {
-      padding: 14
-    }
-  }, React.createElement("p", {
-    className: "sub",
-    style: {
-      margin: 0
-    }
-  }, "You were invited to this trip with your email, but you're not a member yet. Ask the trip owner to link your account from Trip settings.")), React.createElement("div", {
+  }, members.map(m => first(m.name)).join(" · ")))), React.createElement("div", {
     className: "tabs",
     role: "tablist"
   }, [["expenses", "Expenses"], ["balances", "Balances"], ["totals", "Totals"], ["activity", "Activity"]].map(([k, l]) => React.createElement("button", {
@@ -1851,7 +1842,7 @@ function TripScreen({
     }, React.createElement("b", null, first(uById(a.actor).name)), " ", a.detail), React.createElement("div", {
       className: "rsub"
     }, timeAgo(a.created))));
-  }))), amLinked && React.createElement("button", {
+  }))), React.createElement("button", {
     className: "btn fab",
     onClick: () => setSheet({
       type: "add"
@@ -2547,12 +2538,12 @@ function Members({
   const [memberId, setMemberId] = useState("");
   const [busy, setBusy] = useState(false);
   const [pName, setPName] = useState("");
-  const [pEmail, setPEmail] = useState("");
   const [linkFor, setLinkFor] = useState("");
   const [linkId, setLinkId] = useState("");
   const [name, setName] = useState(trip.name);
   const [currency, setCurrency] = useState(normCur(trip.currency));
   const [confirmDel, setConfirmDel] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
   const isOwner = trip.owner === me.id;
   const curLocked = expenseCount > 0;
   async function add() {
@@ -2583,27 +2574,23 @@ function Members({
     if (!isOwner) return;
     const safeName = cleanText(pName, 64);
     if (!safeName) return toast("Name is required");
-    const safeEmail = cleanEmail(pEmail);
-    if (safeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail)) return toast("Enter a valid email, or leave it blank");
     setBusy(true);
     try {
-      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      const pw = token + Math.random().toString(36).slice(2);
+      const token = randToken();
+      const pw = token + randToken();
       const ph = await col("users").create({
         name: safeName,
         email: `ph-${token}@placeholder.invalid`,
         password: pw,
         passwordConfirm: pw,
         emailVisibility: false,
-        is_placeholder: true,
-        invite_email: safeEmail
+        is_placeholder: true
       });
       await col("trips").update(trip.id, {
         "members+": ph.id
       });
       logActivity(trip.id, me.id, "member_added", `added ${safeName} to the trip`);
       setPName("");
-      setPEmail("");
       onDone();
       toast(`Added ${safeName}`);
     } catch (e) {
@@ -2715,7 +2702,7 @@ function Members({
     }
   }, m.name, m.id === me.id ? " (you)" : ""), React.createElement("div", {
     className: "rsub"
-  }, m.id === trip.owner ? "owner" : m.is_placeholder ? m.invite_email ? `invited · ${m.invite_email}` : "not joined yet" : "member")), isOwner && m.id !== trip.owner && m.is_placeholder && React.createElement("button", {
+  }, m.id === trip.owner ? "owner" : m.is_placeholder ? "not joined yet" : "member")), isOwner && m.id !== trip.owner && m.is_placeholder && React.createElement("button", {
     className: "btn sm",
     onClick: () => {
       setLinkFor(linkFor === m.id ? "" : m.id);
@@ -2774,32 +2761,115 @@ function Members({
     style: {
       padding: "10px 0 0"
     }
-  }, "For people who haven't joined ", APP_NAME, " yet. Email is optional \u2014 if they sign up with it, they'll be able to see this trip; link them above once they have an account."), React.createElement("div", {
-    className: "stack",
-    style: {
-      padding: "10px 0 0"
-    }
-  }, React.createElement("input", {
-    value: pName,
-    maxLength: 64,
-    onChange: e => setPName(e.target.value),
-    placeholder: "Name"
-  })), React.createElement("div", {
+  }, "For people who haven't joined ", APP_NAME, " yet. Add their name so you can put them in expenses right away. Share the invite link below so they can join for real."), React.createElement("div", {
     className: "stack",
     style: {
       padding: "10px 0"
     }
   }, React.createElement("input", {
-    type: "email",
-    value: pEmail,
-    onChange: e => setPEmail(e.target.value),
+    value: pName,
+    maxLength: 64,
+    onChange: e => setPName(e.target.value),
     onKeyDown: e => e.key === "Enter" && addParticipant(),
-    placeholder: "Email (optional)"
+    placeholder: "Name"
   }), React.createElement("button", {
     className: "btn sm",
     disabled: busy || !pName.trim(),
     onClick: addParticipant
-  }, "Add")))), React.createElement("h3", {
+  }, "Add")))), isOwner && React.createElement(React.Fragment, null, React.createElement("h3", {
+    className: "h3"
+  }, "Invite link"), React.createElement("div", {
+    className: "card",
+    style: {
+      padding: "6px 14px"
+    }
+  }, trip.share_enabled && trip.share_token ? React.createElement(React.Fragment, null, React.createElement("p", {
+    className: "sub",
+    style: {
+      padding: "10px 0 0"
+    }
+  }, "Anyone with this link can view the trip without an account, and can join it after signing in."), React.createElement("div", {
+    className: "stack",
+    style: {
+      padding: "10px 0"
+    }
+  }, React.createElement("input", {
+    readOnly: true,
+    value: shareUrl(trip.id, trip.share_token),
+    className: "mono",
+    style: {
+      fontSize: 12.5
+    },
+    onFocus: e => e.target.select()
+  }), React.createElement("button", {
+    className: "btn sm",
+    onClick: async () => {
+      toast((await copyText(shareUrl(trip.id, trip.share_token))) ? "Link copied" : "Couldn't copy link");
+    }
+  }, "Copy")), React.createElement("div", {
+    className: "stack",
+    style: {
+      paddingBottom: 10
+    }
+  }, React.createElement("button", {
+    className: "btn sm ghost",
+    disabled: shareBusy,
+    onClick: async () => {
+      setShareBusy(true);
+      try {
+        await col("trips").update(trip.id, {
+          share_token: randToken()
+        });
+        onDone();
+        toast("Link reset — old link stopped working");
+      } catch (e) {
+        toast(e.message);
+      }
+      setShareBusy(false);
+    }
+  }, "Reset link"), React.createElement("button", {
+    className: "btn sm danger",
+    disabled: shareBusy,
+    onClick: async () => {
+      setShareBusy(true);
+      try {
+        await col("trips").update(trip.id, {
+          share_enabled: false
+        });
+        onDone();
+        toast("Sharing turned off");
+      } catch (e) {
+        toast(e.message);
+      }
+      setShareBusy(false);
+    }
+  }, "Turn off sharing"))) : React.createElement(React.Fragment, null, React.createElement("p", {
+    className: "sub",
+    style: {
+      padding: "10px 0 0"
+    }
+  }, "Create a link people can open to see this trip read-only, no account needed \u2014 and join it once they sign in."), React.createElement("div", {
+    style: {
+      padding: "10px 0"
+    }
+  }, React.createElement("button", {
+    className: "btn sm",
+    disabled: shareBusy,
+    onClick: async () => {
+      setShareBusy(true);
+      try {
+        await col("trips").update(trip.id, {
+          share_enabled: true,
+          share_token: randToken()
+        });
+        onDone();
+        toast("Invite link created");
+      } catch (e) {
+        toast(e.message);
+      }
+      setShareBusy(false);
+    }
+  }, "Create invite link"))))), React.createElement("h3", {
     className: "h3"
   }, "Details"), React.createElement("div", {
     className: "card"
@@ -2852,6 +2922,214 @@ function Members({
       }
     }
   }));
+}
+function SharedTripScreen({
+  tripId,
+  token,
+  me,
+  toast
+}) {
+  const [trip, setTrip] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [splits, setSplits] = useState([]);
+  const [settlements, setSettlements] = useState([]);
+  const [err, setErr] = useState("");
+  const [joining, setJoining] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const [t, ex, sp, se] = await Promise.all([col("trips").getOne(tripId, {
+        expand: "members,owner",
+        query: {
+          token
+        }
+      }), col("expenses").getFullList({
+        filter: `trip="${tripId}"`,
+        sort: "-date,-created",
+        query: {
+          token
+        }
+      }), col("splits").getFullList({
+        filter: `expense.trip="${tripId}"`,
+        query: {
+          token
+        }
+      }), col("settlements").getFullList({
+        filter: `trip="${tripId}"`,
+        query: {
+          token
+        }
+      })]);
+      setTrip(t);
+      setExpenses(ex);
+      setSplits(sp);
+      setSettlements(se);
+    } catch (e) {
+      setErr(e?.status === 404 ? "This link is invalid or no longer active." : e.message || "Couldn't load this trip.");
+    }
+  }, [tripId, token]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const members = useMemo(() => {
+    if (!trip) return [];
+    const all = [trip.expand?.owner, ...(trip.expand?.members || [])].filter(Boolean);
+    return all.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i);
+  }, [trip]);
+  const base = normCur(trip?.currency);
+  const nets = useMemo(() => computeNets(expenses, splits, settlements), [expenses, splits, settlements]);
+  const total = useMemo(() => r2(expenses.reduce((a, e) => a + baseAmt(e), 0)), [expenses]);
+  const alreadyIn = !!(me && trip && (trip.owner === me.id || members.some(m => m.id === me.id)));
+  useEffect(() => {
+    if (alreadyIn) go("#/trip/" + tripId);
+  }, [alreadyIn, tripId]);
+  async function doJoin() {
+    try {
+      await col("trips").update(tripId, {
+        "members+": pb.authStore.record.id
+      }, {
+        query: {
+          token
+        }
+      });
+      toast("You're in!");
+      go("#/trip/" + tripId);
+    } catch (e) {
+      toast(e?.data?.message || e.message || "Couldn't join this trip.");
+    }
+  }
+  if (err) return React.createElement("div", {
+    className: "center anim",
+    style: {
+      paddingTop: 40
+    }
+  }, React.createElement("h1", {
+    className: "disp",
+    style: {
+      fontSize: 30
+    }
+  }, APP_NAME), React.createElement("p", {
+    className: "sub",
+    style: {
+      marginTop: 12
+    }
+  }, err));
+  if (!trip || alreadyIn) return React.createElement(React.Fragment, null, React.createElement("div", {
+    style: {
+      height: 20
+    }
+  }), React.createElement("div", {
+    className: "skl",
+    style: {
+      height: 120
+    }
+  }), React.createElement("div", {
+    className: "skl"
+  }));
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "topbar"
+  }, React.createElement("span", {
+    className: "wordmark"
+  }, APP_NAME)), React.createElement("p", {
+    className: "sub anim",
+    style: {
+      marginTop: 4
+    }
+  }, "You're viewing a shared trip, read-only."), React.createElement("div", {
+    className: "card hero anim"
+  }, React.createElement("span", {
+    className: "k"
+  }, "Trip total \xB7 ", base), React.createElement("div", {
+    className: "big"
+  }, fmt(total, base)), React.createElement("div", {
+    className: "stack",
+    style: {
+      gap: 0,
+      marginTop: 14
+    }
+  }, members.map((m, i) => React.createElement("span", {
+    key: m.id,
+    style: {
+      marginLeft: i ? -9 : 0
+    }
+  }, React.createElement(Avatar, {
+    user: m,
+    size: 30
+  }))), React.createElement("span", {
+    style: {
+      marginLeft: 10,
+      fontSize: 12.5,
+      opacity: .85
+    }
+  }, members.map(m => first(m.name)).join(" · ")))), React.createElement("h3", {
+    className: "h3"
+  }, "Balances"), React.createElement("div", {
+    className: "card",
+    style: {
+      padding: "6px 14px"
+    }
+  }, members.map(m => {
+    const n = nets[m.id] || 0;
+    return React.createElement("div", {
+      key: m.id,
+      className: "rrow"
+    }, React.createElement(Avatar, {
+      user: m,
+      size: 32
+    }), React.createElement("div", {
+      className: "rmain"
+    }, React.createElement("div", {
+      className: "rtitle",
+      style: {
+        fontSize: 14
+      }
+    }, m.name)), React.createElement("span", {
+      className: "ramt"
+    }, Math.abs(n) < 0.01 ? "settled" : n > 0 ? `gets ${fmt(n, base)}` : `owes ${fmt(-n, base)}`));
+  })), React.createElement("h3", {
+    className: "h3"
+  }, "Expenses"), expenses.length === 0 && React.createElement("div", {
+    className: "card empty"
+  }, "No expenses yet."), expenses.length > 0 && React.createElement("div", {
+    className: "card",
+    style: {
+      padding: "6px 14px"
+    }
+  }, expenses.map(e => {
+    const payer = members.find(m => m.id === e.paid_by);
+    return React.createElement("div", {
+      key: e.id,
+      className: "rrow"
+    }, React.createElement("span", {
+      className: "catmoji"
+    }, catOf(e.category).emoji), React.createElement("div", {
+      className: "rmain"
+    }, React.createElement("div", {
+      className: "rtitle",
+      style: {
+        fontSize: 14
+      }
+    }, e.description), React.createElement("div", {
+      className: "rsub"
+    }, first(payer?.name || "?"), " paid ", fmt(e.amount, e.currency || base))), React.createElement("span", {
+      className: "ramt"
+    }, fmt(baseAmt(e), base)));
+  })), joining ? React.createElement("div", {
+    className: "card anim",
+    style: {
+      marginTop: 12
+    }
+  }, React.createElement("h3", {
+    className: "h3",
+    style: {
+      marginTop: 0
+    }
+  }, "Sign in or create an account to join"), React.createElement(AuthScreen, {
+    onAuth: doJoin,
+    toast: toast
+  })) : React.createElement("button", {
+    className: "btn fab",
+    onClick: () => me ? doJoin() : setJoining(true)
+  }, "\uFF0B Join this trip"));
 }
 function App() {
   const hash = useHash();
@@ -2906,6 +3184,16 @@ function App() {
   if (verificationContext.token) return React.createElement(React.Fragment, null, React.createElement(VerifyEmailScreen, {
     token: verificationContext.token,
     emailHint: verificationContext.email
+  }), React.createElement(Toast, {
+    msg: toastMsg
+  }));
+  const sharedMatch = hash.match(/^#\/shared\/(\w+)\/([^/?#]+)/);
+  if (sharedMatch) return React.createElement(React.Fragment, null, React.createElement(SharedTripScreen, {
+    key: sharedMatch[1] + sharedMatch[2],
+    tripId: sharedMatch[1],
+    token: sharedMatch[2],
+    me: pb.authStore.isValid ? pb.authStore.record : null,
+    toast: toast
   }), React.createElement(Toast, {
     msg: toastMsg
   }));

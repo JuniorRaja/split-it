@@ -110,6 +110,8 @@ const r2 = n => Math.round(n*100)/100;
 const MAX_LEN = { tripName: 72, description: 120, notes: 280, comment: 300 };
 const cleanText = (v, max) => String(v || "").replace(/\s+/g, " ").trim().slice(0, max);
 const cleanEmail = v => String(v || "").trim().toLowerCase().slice(0, 200);
+const randToken = () => Math.random().toString(36).slice(2)+Date.now().toString(36)+Math.random().toString(36).slice(2);
+const shareUrl = (tripId, token) => `${location.origin}${location.pathname}#/shared/${tripId}/${token}`;
 const AUTH_GUARD_KEY = "si_auth_guard";
 const AUTH_PREFILL_EMAIL_KEY = "si_auth_prefill_email";
 const AUTH_FAIL_LIMIT = 6;
@@ -793,7 +795,6 @@ function TripScreen({tripId,me,toast}){
   },[trip]);
   const uById=id=>members.find(m=>m.id===id)||{name:"?",id};
   const isTripOwner = trip?.owner===me.id;
-  const amLinked = isTripOwner || members.some(m=>m.id===me.id);
 
   const load=useCallback(async()=>{
     try{
@@ -884,13 +885,6 @@ function TripScreen({tripId,me,toast}){
         <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.map(m=>first(m.name)).join(" · ")}</span>
       </div>
     </div>
-
-    {!amLinked && <div className="card anim" style={{padding:14}}>
-      <p className="sub" style={{margin:0}}>
-        You were invited to this trip with your email, but you're not a member yet.
-        Ask the trip owner to link your account from Trip settings.
-      </p>
-    </div>}
 
     <div className="tabs" role="tablist">
       {[["expenses","Expenses"],["balances","Balances"],["totals","Totals"],["activity","Activity"]].map(([k,l])=>
@@ -1091,7 +1085,7 @@ function TripScreen({tripId,me,toast}){
     </div>}
     </div>
 
-    {amLinked && <button className="btn fab" onClick={()=>setSheet({type:"add"})}>＋ Add expense</button>}
+    <button className="btn fab" onClick={()=>setSheet({type:"add"})}>＋ Add expense</button>
 
     {/* ---------- sheets ---------- */}
     {sheet?.type==="add" && <ExpenseForm trip={trip} members={members} me={me} base={base}
@@ -1444,11 +1438,12 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
 /* ================= members & trip settings ================= */
 function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
   const [memberId,setMemberId]=useState(""); const [busy,setBusy]=useState(false);
-  const [pName,setPName]=useState(""); const [pEmail,setPEmail]=useState("");
+  const [pName,setPName]=useState("");
   const [linkFor,setLinkFor]=useState(""); const [linkId,setLinkId]=useState("");
   const [name,setName]=useState(trip.name);
   const [currency,setCurrency]=useState(normCur(trip.currency));
   const [confirmDel,setConfirmDel]=useState(false);
+  const [shareBusy,setShareBusy]=useState(false);
   const isOwner=trip.owner===me.id;
   const curLocked=expenseCount>0;
 
@@ -1470,21 +1465,18 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
     if(!isOwner)return;
     const safeName = cleanText(pName, 64);
     if(!safeName)return toast("Name is required");
-    const safeEmail = cleanEmail(pEmail);
-    if(safeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail))
-      return toast("Enter a valid email, or leave it blank");
     setBusy(true);
     try{
-      const token = Math.random().toString(36).slice(2)+Date.now().toString(36);
-      const pw = token+Math.random().toString(36).slice(2);
+      const token = randToken();
+      const pw = token+randToken();
       const ph = await col("users").create({
         name: safeName, email: `ph-${token}@placeholder.invalid`,
         password: pw, passwordConfirm: pw, emailVisibility: false,
-        is_placeholder: true, invite_email: safeEmail,
+        is_placeholder: true,
       });
       await col("trips").update(trip.id,{"members+":ph.id});
       logActivity(trip.id,me.id,"member_added",`added ${safeName} to the trip`);
-      setPName(""); setPEmail(""); onDone(); toast(`Added ${safeName}`);
+      setPName(""); onDone(); toast(`Added ${safeName}`);
     }catch(e){ toast(e?.data?.message||e.message); }
     setBusy(false);
   }
@@ -1539,7 +1531,7 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
           <div className="rmain">
             <div className="rtitle" style={{fontSize:14}}>{m.name}{m.id===me.id?" (you)":""}</div>
             <div className="rsub">{m.id===trip.owner?"owner"
-              :m.is_placeholder?(m.invite_email?`invited · ${m.invite_email}`:"not joined yet")
+              :m.is_placeholder?"not joined yet"
               :"member"}</div>
           </div>
           {isOwner&&m.id!==trip.owner&&m.is_placeholder&&
@@ -1567,17 +1559,60 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
       <h3 className="h3">Add participant</h3>
       <div className="card" style={{padding:"6px 14px"}}>
         <p className="sub" style={{padding:"10px 0 0"}}>
-          For people who haven't joined {APP_NAME} yet. Email is optional — if they sign
-          up with it, they'll be able to see this trip; link them above once they have an account.
+          For people who haven't joined {APP_NAME} yet. Add their name so you can put them
+          in expenses right away. Share the invite link below so they can join for real.
         </p>
-        <div className="stack" style={{padding:"10px 0 0"}}>
-          <input value={pName} maxLength={64} onChange={e=>setPName(e.target.value)} placeholder="Name"/>
-        </div>
         <div className="stack" style={{padding:"10px 0"}}>
-          <input type="email" value={pEmail} onChange={e=>setPEmail(e.target.value)}
-            onKeyDown={e=>e.key==="Enter"&&addParticipant()} placeholder="Email (optional)"/>
+          <input value={pName} maxLength={64} onChange={e=>setPName(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&addParticipant()} placeholder="Name"/>
           <button className="btn sm" disabled={busy||!pName.trim()} onClick={addParticipant}>Add</button>
         </div>
+      </div>
+    </>}
+
+    {isOwner && <>
+      <h3 className="h3">Invite link</h3>
+      <div className="card" style={{padding:"6px 14px"}}>
+        {trip.share_enabled && trip.share_token
+          ? <>
+              <p className="sub" style={{padding:"10px 0 0"}}>
+                Anyone with this link can view the trip without an account, and can join it after signing in.
+              </p>
+              <div className="stack" style={{padding:"10px 0"}}>
+                <input readOnly value={shareUrl(trip.id,trip.share_token)} className="mono" style={{fontSize:12.5}}
+                  onFocus={e=>e.target.select()}/>
+                <button className="btn sm" onClick={async()=>{
+                  toast((await copyText(shareUrl(trip.id,trip.share_token)))?"Link copied":"Couldn't copy link");
+                }}>Copy</button>
+              </div>
+              <div className="stack" style={{paddingBottom:10}}>
+                <button className="btn sm ghost" disabled={shareBusy} onClick={async()=>{
+                  setShareBusy(true);
+                  try{ await col("trips").update(trip.id,{share_token:randToken()}); onDone(); toast("Link reset — old link stopped working"); }
+                  catch(e){ toast(e.message); }
+                  setShareBusy(false);
+                }}>Reset link</button>
+                <button className="btn sm danger" disabled={shareBusy} onClick={async()=>{
+                  setShareBusy(true);
+                  try{ await col("trips").update(trip.id,{share_enabled:false}); onDone(); toast("Sharing turned off"); }
+                  catch(e){ toast(e.message); }
+                  setShareBusy(false);
+                }}>Turn off sharing</button>
+              </div>
+            </>
+          : <>
+              <p className="sub" style={{padding:"10px 0 0"}}>
+                Create a link people can open to see this trip read-only, no account needed — and join it once they sign in.
+              </p>
+              <div style={{padding:"10px 0"}}>
+                <button className="btn sm" disabled={shareBusy} onClick={async()=>{
+                  setShareBusy(true);
+                  try{ await col("trips").update(trip.id,{share_enabled:true,share_token:randToken()}); onDone(); toast("Invite link created"); }
+                  catch(e){ toast(e.message); }
+                  setShareBusy(false);
+                }}>Create invite link</button>
+              </div>
+            </>}
       </div>
     </>}
 
@@ -1607,6 +1642,104 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
         catch(e){ toast(e.message); }
       }}/>}
   </Sheet>;
+}
+
+/* ================= shared (read-only, no account) trip view ================= */
+function SharedTripScreen({tripId,token,me,toast}){
+  const [trip,setTrip]=useState(null);
+  const [expenses,setExpenses]=useState([]);
+  const [splits,setSplits]=useState([]);
+  const [settlements,setSettlements]=useState([]);
+  const [err,setErr]=useState("");
+  const [joining,setJoining]=useState(false);
+
+  const load=useCallback(async()=>{
+    try{
+      const [t,ex,sp,se]=await Promise.all([
+        col("trips").getOne(tripId,{expand:"members,owner",query:{token}}),
+        col("expenses").getFullList({filter:`trip="${tripId}"`,sort:"-date,-created",query:{token}}),
+        col("splits").getFullList({filter:`expense.trip="${tripId}"`,query:{token}}),
+        col("settlements").getFullList({filter:`trip="${tripId}"`,query:{token}}),
+      ]);
+      setTrip(t);setExpenses(ex);setSplits(sp);setSettlements(se);
+    }catch(e){ setErr(e?.status===404?"This link is invalid or no longer active.":(e.message||"Couldn't load this trip.")); }
+  },[tripId,token]);
+  useEffect(()=>{load()},[load]);
+
+  const members=useMemo(()=>{
+    if(!trip)return[];
+    const all=[trip.expand?.owner,...(trip.expand?.members||[])].filter(Boolean);
+    return all.filter((m,i,a)=>a.findIndex(x=>x.id===m.id)===i);
+  },[trip]);
+  const base=normCur(trip?.currency);
+  const nets=useMemo(()=>computeNets(expenses,splits,settlements),[expenses,splits,settlements]);
+  const total=useMemo(()=>r2(expenses.reduce((a,e)=>a+baseAmt(e),0)),[expenses]);
+  const alreadyIn = !!(me && trip && (trip.owner===me.id || members.some(m=>m.id===me.id)));
+
+  useEffect(()=>{ if(alreadyIn) go("#/trip/"+tripId); },[alreadyIn,tripId]);
+
+  async function doJoin(){
+    try{
+      await col("trips").update(tripId,{"members+":pb.authStore.record.id},{query:{token}});
+      toast("You're in!");
+      go("#/trip/"+tripId);
+    }catch(e){ toast(e?.data?.message||e.message||"Couldn't join this trip."); }
+  }
+
+  if(err) return <div className="center anim" style={{paddingTop:40}}>
+    <h1 className="disp" style={{fontSize:30}}>{APP_NAME}</h1>
+    <p className="sub" style={{marginTop:12}}>{err}</p>
+  </div>;
+  if(!trip || alreadyIn) return <><div style={{height:20}}/><div className="skl" style={{height:120}}/><div className="skl"/></>;
+
+  return <>
+    <div className="topbar"><span className="wordmark">{APP_NAME}</span></div>
+    <p className="sub anim" style={{marginTop:4}}>You're viewing a shared trip, read-only.</p>
+
+    <div className="card hero anim">
+      <span className="k">Trip total · {base}</span>
+      <div className="big">{fmt(total,base)}</div>
+      <div className="stack" style={{gap:0,marginTop:14}}>
+        {members.map((m,i)=><span key={m.id} style={{marginLeft:i?-9:0}}><Avatar user={m} size={30}/></span>)}
+        <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.map(m=>first(m.name)).join(" · ")}</span>
+      </div>
+    </div>
+
+    <h3 className="h3">Balances</h3>
+    <div className="card" style={{padding:"6px 14px"}}>
+      {members.map(m=>{
+        const n=nets[m.id]||0;
+        return <div key={m.id} className="rrow">
+          <Avatar user={m} size={32}/>
+          <div className="rmain"><div className="rtitle" style={{fontSize:14}}>{m.name}</div></div>
+          <span className="ramt">{Math.abs(n)<0.01?"settled":(n>0?`gets ${fmt(n,base)}`:`owes ${fmt(-n,base)}`)}</span>
+        </div>;
+      })}
+    </div>
+
+    <h3 className="h3">Expenses</h3>
+    {expenses.length===0 && <div className="card empty">No expenses yet.</div>}
+    {expenses.length>0 && <div className="card" style={{padding:"6px 14px"}}>
+      {expenses.map(e=>{
+        const payer=members.find(m=>m.id===e.paid_by);
+        return <div key={e.id} className="rrow">
+          <span className="catmoji">{catOf(e.category).emoji}</span>
+          <div className="rmain">
+            <div className="rtitle" style={{fontSize:14}}>{e.description}</div>
+            <div className="rsub">{first(payer?.name||"?")} paid {fmt(e.amount,e.currency||base)}</div>
+          </div>
+          <span className="ramt">{fmt(baseAmt(e),base)}</span>
+        </div>;
+      })}
+    </div>}
+
+    {joining
+      ? <div className="card anim" style={{marginTop:12}}>
+          <h3 className="h3" style={{marginTop:0}}>Sign in or create an account to join</h3>
+          <AuthScreen onAuth={doJoin} toast={toast}/>
+        </div>
+      : <button className="btn fab" onClick={()=>me?doJoin():setJoining(true)}>＋ Join this trip</button>}
+  </>;
 }
 
 /* ================= app root ================= */
@@ -1650,6 +1783,12 @@ function App(){
   if(!ready) return <div className="center"><div className="skl" style={{height:100}}/></div>;
   if(verificationContext.token)
     return <><VerifyEmailScreen token={verificationContext.token} emailHint={verificationContext.email}/><Toast msg={toastMsg}/></>;
+
+  const sharedMatch = hash.match(/^#\/shared\/(\w+)\/([^/?#]+)/);
+  if(sharedMatch)
+    return <><SharedTripScreen key={sharedMatch[1]+sharedMatch[2]} tripId={sharedMatch[1]} token={sharedMatch[2]}
+      me={pb.authStore.isValid?pb.authStore.record:null} toast={toast}/><Toast msg={toastMsg}/></>;
+
   if(!pb.authStore.isValid)
     return <><AuthScreen onAuth={()=>force(x=>x+1)} toast={toast}/><Toast msg={toastMsg}/></>;
   const me=pb.authStore.record;

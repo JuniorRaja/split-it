@@ -129,21 +129,6 @@
                            "required":  false,
                            "system":  false,
                            "type":  "bool"
-                       },
-                       {
-                           "autogeneratePattern":  "",
-                           "help":  "",
-                           "hidden":  false,
-                           "id":  "text3738291441",
-                           "max":  200,
-                           "min":  0,
-                           "name":  "invite_email",
-                           "pattern":  "",
-                           "presentable":  false,
-                           "primaryKey":  false,
-                           "required":  false,
-                           "system":  false,
-                           "type":  "text"
                        }
                    ],
         "indexes":  [
@@ -224,10 +209,10 @@
     },
     {
         "id":  "pbc_1498227100",
-        "listRule":  "owner = @request.auth.id || members.id ?= @request.auth.id || members.invite_email ?= @request.auth.email",
-        "viewRule":  "owner = @request.auth.id || members.id ?= @request.auth.id || members.invite_email ?= @request.auth.email",
+        "listRule":  "owner = @request.auth.id || members.id ?= @request.auth.id",
+        "viewRule":  "owner = @request.auth.id || members.id ?= @request.auth.id || (share_enabled = true && share_token = @request.query.token)",
         "createRule":  "@request.auth.collectionName = \"splitit_users\" \u0026\u0026 owner = @request.auth.id",
-        "updateRule":  "owner = @request.auth.id",
+        "updateRule":  "owner = @request.auth.id || (@request.auth.id != '' && share_enabled = true && share_token = @request.query.token)",
         "deleteRule":  "owner = @request.auth.id",
         "name":  "splitit_trips",
         "type":  "base",
@@ -324,6 +309,31 @@
                            "presentable":  false,
                            "system":  false,
                            "type":  "autodate"
+                       },
+                       {
+                           "autogeneratePattern":  "",
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "text3738291442",
+                           "max":  64,
+                           "min":  0,
+                           "name":  "share_token",
+                           "pattern":  "",
+                           "presentable":  false,
+                           "primaryKey":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "text"
+                       },
+                       {
+                           "help":  "",
+                           "hidden":  false,
+                           "id":  "bool3738291443",
+                           "name":  "share_enabled",
+                           "presentable":  false,
+                           "required":  false,
+                           "system":  false,
+                           "type":  "bool"
                        }
                    ],
         "indexes":  [
@@ -335,8 +345,8 @@
     },
     {
         "id":  "pbc_843084644",
-        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
-        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || (trip.share_enabled = true && trip.share_token = @request.query.token)",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || (trip.share_enabled = true && trip.share_token = @request.query.token)",
         "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "updateRule":  "trip.owner = @request.auth.id || paid_by = @request.auth.id",
         "deleteRule":  "trip.owner = @request.auth.id || paid_by = @request.auth.id",
@@ -542,8 +552,8 @@
     },
     {
         "id":  "pbc_3997417623",
-        "listRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id || expense.trip.members.invite_email ?= @request.auth.email",
-        "viewRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id || expense.trip.members.invite_email ?= @request.auth.email",
+        "listRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id || (expense.trip.share_enabled = true && expense.trip.share_token = @request.query.token)",
+        "viewRule":  "expense.trip.owner = @request.auth.id || expense.trip.members.id ?= @request.auth.id || (expense.trip.share_enabled = true && expense.trip.share_token = @request.query.token)",
         "createRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
         "updateRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
         "deleteRule":  "expense.trip.owner = @request.auth.id || expense.paid_by = @request.auth.id",
@@ -649,8 +659,8 @@
     },
     {
         "id":  "pbc_2092661859",
-        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
-        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || (trip.share_enabled = true && trip.share_token = @request.query.token)",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || (trip.share_enabled = true && trip.share_token = @request.query.token)",
         "createRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "updateRule":  "trip.owner = @request.auth.id || from = @request.auth.id || to = @request.auth.id",
         "deleteRule":  "trip.owner = @request.auth.id || from = @request.auth.id || to = @request.auth.id",
@@ -784,8 +794,8 @@
     },
     {
         "id":  "pbc_3131214181",
-        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
-        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id || trip.members.invite_email ?= @request.auth.email",
+        "listRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
+        "viewRule":  "trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id",
         "createRule":  "actor = @request.auth.id && (trip.owner = @request.auth.id || trip.members.id ?= @request.auth.id)",
         "updateRule":  null,
         "deleteRule":  null,
