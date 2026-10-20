@@ -793,6 +793,7 @@ function TripScreen({tripId,me,toast}){
   },[trip]);
   const uById=id=>members.find(m=>m.id===id)||{name:"?",id};
   const isTripOwner = trip?.owner===me.id;
+  const amLinked = isTripOwner || members.some(m=>m.id===me.id);
 
   const load=useCallback(async()=>{
     try{
@@ -883,6 +884,13 @@ function TripScreen({tripId,me,toast}){
         <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.map(m=>first(m.name)).join(" · ")}</span>
       </div>
     </div>
+
+    {!amLinked && <div className="card anim" style={{padding:14}}>
+      <p className="sub" style={{margin:0}}>
+        You were invited to this trip with your email, but you're not a member yet.
+        Ask the trip owner to link your account from Trip settings.
+      </p>
+    </div>}
 
     <div className="tabs" role="tablist">
       {[["expenses","Expenses"],["balances","Balances"],["totals","Totals"],["activity","Activity"]].map(([k,l])=>
@@ -1071,7 +1079,7 @@ function TripScreen({tripId,me,toast}){
       {activity.filter(a=>a.action!=="comment").length===0 && <div className="empty">Nothing yet.</div>}
       {activity.filter(a=>a.action!=="comment").map((a,i)=>{
         const icon={trip_created:"🌱",expense_added:"🧾",expense_edited:"✏️",expense_deleted:"🗑️",
-          payment_added:"💸",payment_deleted:"↩️",member_added:"👋"}[a.action]||"•";
+          payment_added:"💸",payment_deleted:"↩️",member_added:"👋",member_linked:"🔗"}[a.action]||"•";
         return <div key={a.id} className="rrow anim" style={{animationDelay:`${i*30}ms`}}>
           <span className="catmoji">{icon}</span>
           <div className="rmain">
@@ -1083,7 +1091,7 @@ function TripScreen({tripId,me,toast}){
     </div>}
     </div>
 
-    <button className="btn fab" onClick={()=>setSheet({type:"add"})}>＋ Add expense</button>
+    {amLinked && <button className="btn fab" onClick={()=>setSheet({type:"add"})}>＋ Add expense</button>}
 
     {/* ---------- sheets ---------- */}
     {sheet?.type==="add" && <ExpenseForm trip={trip} members={members} me={me} base={base}
@@ -1436,6 +1444,8 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
 /* ================= members & trip settings ================= */
 function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
   const [memberId,setMemberId]=useState(""); const [busy,setBusy]=useState(false);
+  const [pName,setPName]=useState(""); const [pEmail,setPEmail]=useState("");
+  const [linkFor,setLinkFor]=useState(""); const [linkId,setLinkId]=useState("");
   const [name,setName]=useState(trip.name);
   const [currency,setCurrency]=useState(normCur(trip.currency));
   const [confirmDel,setConfirmDel]=useState(false);
@@ -1456,6 +1466,55 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
     }catch(e){ toast(e.status===404?"No user found with that member ID":(e.message)); }
     setBusy(false);
   }
+  async function addParticipant(){
+    if(!isOwner)return;
+    const safeName = cleanText(pName, 64);
+    if(!safeName)return toast("Name is required");
+    const safeEmail = cleanEmail(pEmail);
+    if(safeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail))
+      return toast("Enter a valid email, or leave it blank");
+    setBusy(true);
+    try{
+      const token = Math.random().toString(36).slice(2)+Date.now().toString(36);
+      const pw = token+Math.random().toString(36).slice(2);
+      const ph = await col("users").create({
+        name: safeName, email: `ph-${token}@placeholder.invalid`,
+        password: pw, passwordConfirm: pw, emailVisibility: false,
+        is_placeholder: true, invite_email: safeEmail,
+      });
+      await col("trips").update(trip.id,{"members+":ph.id});
+      logActivity(trip.id,me.id,"member_added",`added ${safeName} to the trip`);
+      setPName(""); setPEmail(""); onDone(); toast(`Added ${safeName}`);
+    }catch(e){ toast(e?.data?.message||e.message); }
+    setBusy(false);
+  }
+  async function link(placeholderId){
+    const realId = cleanText(linkId, 40).toLowerCase();
+    if(!realId)return;
+    setBusy(true);
+    try{
+      const u=await col("users").getOne(realId);
+      if(u.id===placeholderId){toast("That's the same person");setBusy(false);return;}
+      if(members.some(m=>m.id===u.id)){toast("Already in this trip");setBusy(false);return;}
+      const [exps,sps,settles]=await Promise.all([
+        col("expenses").getFullList({filter:`trip="${trip.id}" && paid_by="${placeholderId}"`}),
+        col("splits").getFullList({filter:`expense.trip="${trip.id}" && user="${placeholderId}"`}),
+        col("settlements").getFullList({filter:`trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`}),
+      ]);
+      await Promise.all([
+        ...exps.map(e=>col("expenses").update(e.id,{paid_by:u.id})),
+        ...sps.map(s=>col("splits").update(s.id,{user:u.id})),
+        ...settles.map(s=>col("settlements").update(s.id,{
+          ...(s.from===placeholderId?{from:u.id}:{}),
+          ...(s.to===placeholderId?{to:u.id}:{}),
+        })),
+      ]);
+      await col("trips").update(trip.id,{"members-":placeholderId,"members+":u.id});
+      logActivity(trip.id,me.id,"member_linked",`linked ${u.name} to existing entries`);
+      setLinkFor(""); setLinkId(""); onDone(); toast(`Linked to ${u.name}`);
+    }catch(e){ toast(e.status===404?"No user found with that member ID":(e?.data?.message||e.message)); }
+    setBusy(false);
+  }
   async function remove(id){
     try{ await col("trips").update(trip.id,{"members-":id}); onDone(); }
     catch(e){ toast(e.message); }
@@ -1474,15 +1533,26 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
     <h3 className="h3" style={{marginTop:4}}>Members</h3>
     <div className="card" style={{padding:"6px 14px"}}>
       {members.map(m=>
-        <div key={m.id} className="rrow">
+        <React.Fragment key={m.id}>
+        <div className="rrow">
           <Avatar user={m} size={32}/>
           <div className="rmain">
             <div className="rtitle" style={{fontSize:14}}>{m.name}{m.id===me.id?" (you)":""}</div>
-            <div className="rsub">{m.id===trip.owner?"owner":"member"}</div>
+            <div className="rsub">{m.id===trip.owner?"owner"
+              :m.is_placeholder?(m.invite_email?`invited · ${m.invite_email}`:"not joined yet")
+              :"member"}</div>
           </div>
+          {isOwner&&m.id!==trip.owner&&m.is_placeholder&&
+            <button className="btn sm" onClick={()=>{setLinkFor(linkFor===m.id?"":m.id);setLinkId("")}}>Link</button>}
           {isOwner&&m.id!==trip.owner&&
             <button className="btn sm danger" onClick={()=>remove(m.id)}>Remove</button>}
-        </div>)}
+        </div>
+        {linkFor===m.id && <div className="stack" style={{padding:"0 0 10px"}}>
+          <input value={linkId} onChange={e=>setLinkId(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&link(m.id)} placeholder="Their member ID…"/>
+          <button className="btn sm" disabled={busy||!linkId.trim()} onClick={()=>link(m.id)}>Confirm</button>
+        </div>}
+        </React.Fragment>)}
       {isOwner
         ? <div className="stack" style={{padding:"10px 0"}}>
             <input value={memberId} onChange={e=>setMemberId(e.target.value)}
@@ -1492,6 +1562,24 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
         : <p className="sub" style={{padding:"10px 0"}}>Only the trip owner can add or remove members.</p>}
       {isOwner && <p className="sub" style={{paddingBottom:8}}>Ask the person to copy their member ID from the home screen.</p>}
     </div>
+
+    {isOwner && <>
+      <h3 className="h3">Add participant</h3>
+      <div className="card" style={{padding:"6px 14px"}}>
+        <p className="sub" style={{padding:"10px 0 0"}}>
+          For people who haven't joined {APP_NAME} yet. Email is optional — if they sign
+          up with it, they'll be able to see this trip; link them above once they have an account.
+        </p>
+        <div className="stack" style={{padding:"10px 0 0"}}>
+          <input value={pName} maxLength={64} onChange={e=>setPName(e.target.value)} placeholder="Name"/>
+        </div>
+        <div className="stack" style={{padding:"10px 0"}}>
+          <input type="email" value={pEmail} onChange={e=>setPEmail(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&addParticipant()} placeholder="Email (optional)"/>
+          <button className="btn sm" disabled={busy||!pName.trim()} onClick={addParticipant}>Add</button>
+        </div>
+      </div>
+    </>}
 
     <h3 className="h3">Details</h3>
     <div className="card">
