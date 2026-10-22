@@ -112,6 +112,7 @@ const cleanText = (v, max) => String(v || "").replace(/\s+/g, " ").trim().slice(
 const cleanEmail = v => String(v || "").trim().toLowerCase().slice(0, 200);
 const randToken = () => Math.random().toString(36).slice(2)+Date.now().toString(36)+Math.random().toString(36).slice(2);
 const shareUrl = (tripId, token) => `${location.origin}${location.pathname}#/shared/${tripId}/${token}`;
+const shareUrlFor = (tripId, token, memberId) => `${shareUrl(tripId, token)}/${memberId}`;
 const AUTH_GUARD_KEY = "si_auth_guard";
 const AUTH_PREFILL_EMAIL_KEY = "si_auth_prefill_email";
 const AUTH_FAIL_LIMIT = 6;
@@ -1502,6 +1503,41 @@ function SettleForm({trip,members,me,base,preset,uById,onDone,onClose,toast}){
   </Sheet>;
 }
 
+/* reassigns a placeholder's expenses/splits/settlements to a real user, then swaps trip membership.
+   authOpts carries {query:{token}} when called by the joining user themselves (not the trip owner). */
+async function mergePlaceholder(tripId, placeholderId, realUserId, authOpts){
+  const opts = authOpts || {};
+  const [exps,sps,settles]=await Promise.all([
+    col("expenses").getFullList({filter:`trip="${tripId}" && paid_by="${placeholderId}"`,...opts}),
+    col("splits").getFullList({filter:`expense.trip="${tripId}" && user="${placeholderId}"`,...opts}),
+    col("settlements").getFullList({filter:`trip="${tripId}" && (from="${placeholderId}" || to="${placeholderId}")`,...opts}),
+  ]);
+  const ops=[
+    ...exps.map(e=>()=>col("expenses").update(e.id,{paid_by:realUserId},opts)),
+    ...sps.map(s=>()=>col("splits").update(s.id,{user:realUserId},opts)),
+    ...settles.map(s=>()=>col("settlements").update(s.id,{
+      ...(s.from===placeholderId?{from:realUserId}:{}),
+      ...(s.to===placeholderId?{to:realUserId}:{}),
+    },opts)),
+  ];
+  let batchedOk=false;
+  if(!opts.query && ops.length>0 && ops.length<=BATCH_MAX_OPS){
+    try{
+      const b=pb.createBatch();
+      exps.forEach(ex=>b.collection(PREFIX+"expenses").update(ex.id,{paid_by:realUserId}));
+      sps.forEach(s=>b.collection(PREFIX+"splits").update(s.id,{user:realUserId}));
+      settles.forEach(s=>b.collection(PREFIX+"settlements").update(s.id,{
+        ...(s.from===placeholderId?{from:realUserId}:{}),
+        ...(s.to===placeholderId?{to:realUserId}:{}),
+      }));
+      await b.send();
+      batchedOk=true;
+    }catch(batchErr){ /* batch unavailable/disabled — fall through to the safe path below */ }
+  }
+  if(!batchedOk) await runLimited(ops, fn=>fn());
+  await col("trips").update(tripId,{"members-":placeholderId,"members+":realUserId},opts);
+}
+
 /* ================= members & trip settings ================= */
 function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
   const [memberId,setMemberId]=useState(""); const [busy,setBusy]=useState(false);
@@ -1555,39 +1591,19 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
       const u=await col("users").getOne(realId);
       if(u.id===placeholderId){toast("That's the same person");setBusy(false);return;}
       if(members.some(m=>m.id===u.id)){toast("Already in this trip");setBusy(false);return;}
-      const [exps,sps,settles]=await Promise.all([
-        col("expenses").getFullList({filter:`trip="${trip.id}" && paid_by="${placeholderId}"`}),
-        col("splits").getFullList({filter:`expense.trip="${trip.id}" && user="${placeholderId}"`}),
-        col("settlements").getFullList({filter:`trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`}),
-      ]);
-      const ops=[
-        ...exps.map(e=>()=>col("expenses").update(e.id,{paid_by:u.id})),
-        ...sps.map(s=>()=>col("splits").update(s.id,{user:u.id})),
-        ...settles.map(s=>()=>col("settlements").update(s.id,{
-          ...(s.from===placeholderId?{from:u.id}:{}),
-          ...(s.to===placeholderId?{to:u.id}:{}),
-        })),
-      ];
-      let batchedOk=false;
-      if(ops.length>0 && ops.length<=BATCH_MAX_OPS){
-        try{
-          const b=pb.createBatch();
-          exps.forEach(ex=>b.collection(PREFIX+"expenses").update(ex.id,{paid_by:u.id}));
-          sps.forEach(s=>b.collection(PREFIX+"splits").update(s.id,{user:u.id}));
-          settles.forEach(s=>b.collection(PREFIX+"settlements").update(s.id,{
-            ...(s.from===placeholderId?{from:u.id}:{}),
-            ...(s.to===placeholderId?{to:u.id}:{}),
-          }));
-          await b.send();
-          batchedOk=true;
-        }catch(batchErr){ /* batch unavailable/disabled — fall through to the safe path below */ }
-      }
-      if(!batchedOk) await runLimited(ops, fn=>fn());
-      await col("trips").update(trip.id,{"members-":placeholderId,"members+":u.id});
+      await mergePlaceholder(trip.id, placeholderId, u.id);
       logActivity(trip.id,me.id,"member_linked",`linked ${u.name} to existing entries`);
       setLinkFor(""); setLinkId(""); onDone(); toast(`Linked to ${u.name}`);
     }catch(e){ toast(e.status===404?"No user found with that member ID":(e?.data?.message||e.message)); }
     setBusy(false);
+  }
+  async function inviteFor(m){
+    let t=trip;
+    if(!t.share_enabled || !t.share_token){
+      try{ t=await col("trips").update(trip.id,{share_enabled:true,share_token:randToken()}); onDone(); }
+      catch(e){ toast(e.message); return; }
+    }
+    toast((await copyText(shareUrlFor(t.id,t.share_token,m.id)))?"Invite link copied":"Couldn't copy link");
   }
   async function remove(id){
     try{ await col("trips").update(trip.id,{"members-":id}); onDone(); }
@@ -1618,6 +1634,8 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
           </div>
           {isOwner&&m.id!==trip.owner&&m.is_placeholder&&
             <button className="btn sm" onClick={()=>{setLinkFor(linkFor===m.id?"":m.id);setLinkId("")}}>Link</button>}
+          {isOwner&&m.id!==trip.owner&&m.is_placeholder&&
+            <button className="btn sm ghost" onClick={()=>inviteFor(m)}>Invite</button>}
           {isOwner&&m.id!==trip.owner&&
             <button className="btn sm danger" onClick={()=>remove(m.id)}>Remove</button>}
         </div>
@@ -1723,13 +1741,16 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
 }
 
 /* ================= shared (read-only, no account) trip view ================= */
-function SharedTripScreen({tripId,token,me,toast}){
+function SharedTripScreen({tripId,token,forMemberId,me,toast}){
   const [trip,setTrip]=useState(null);
   const [expenses,setExpenses]=useState([]);
   const [splits,setSplits]=useState([]);
   const [settlements,setSettlements]=useState([]);
   const [err,setErr]=useState("");
   const [joining,setJoining]=useState(false);
+  const [claimStep,setClaimStep]=useState(null); // null | "pick" | "confirm"
+  const [claimId,setClaimId]=useState("");
+  const [claimBusy,setClaimBusy]=useState(false);
 
   const load=useCallback(async()=>{
     try{
@@ -1753,6 +1774,8 @@ function SharedTripScreen({tripId,token,me,toast}){
   const nets=useMemo(()=>computeNets(expenses,splits,settlements),[expenses,splits,settlements]);
   const total=useMemo(()=>r2(expenses.reduce((a,e)=>a+baseAmt(e),0)),[expenses]);
   const alreadyIn = !!(me && trip && (trip.owner===me.id || members.some(m=>m.id===me.id)));
+  const placeholders=useMemo(()=>members.filter(m=>m.is_placeholder),[members]);
+  const directMember=forMemberId?placeholders.find(p=>p.id===forMemberId):null;
 
   useEffect(()=>{ if(alreadyIn) go("#/trip/"+tripId); },[alreadyIn,tripId]);
 
@@ -1762,6 +1785,22 @@ function SharedTripScreen({tripId,token,me,toast}){
       toast("You're in!");
       go("#/trip/"+tripId);
     }catch(e){ toast(e?.data?.message||e.message||"Couldn't join this trip."); }
+  }
+
+  function afterAuth(){
+    if(directMember){ setClaimId(directMember.id); setClaimStep("confirm"); return; }
+    if(placeholders.length>0){ setClaimStep("pick"); return; }
+    doJoin();
+  }
+
+  async function doClaim(){
+    setClaimBusy(true);
+    try{
+      await mergePlaceholder(tripId, claimId, pb.authStore.record.id, {query:{token}});
+      toast("You're in!");
+      go("#/trip/"+tripId);
+    }catch(e){ toast(e?.data?.message||e.message||"Couldn't join this trip."); }
+    setClaimBusy(false);
   }
 
   if(err) return <div className="center anim" style={{paddingTop:40}}>
@@ -1811,12 +1850,34 @@ function SharedTripScreen({tripId,token,me,toast}){
       })}
     </div>}
 
-    {joining
+    {claimStep==="pick"
+      ? <div className="card anim" style={{marginTop:12}}>
+          <h3 className="h3" style={{marginTop:0}}>Is one of these you?</h3>
+          <p className="sub" style={{marginTop:0}}>They were added to this trip before joining.</p>
+          <div className="stack" style={{gap:8}}>
+            {placeholders.map(p=>
+              <button key={p.id} className="btn sm ghost" onClick={()=>{setClaimId(p.id);setClaimStep("confirm")}}>{p.name}</button>)}
+            <button className="btn sm" onClick={doJoin}>None of these — I'm new</button>
+          </div>
+        </div>
+      : claimStep==="confirm"
+      ? <div className="card anim" style={{marginTop:12}}>
+          <h3 className="h3" style={{marginTop:0}}>Join as {members.find(m=>m.id===claimId)?.name}?</h3>
+          <p className="sub" style={{marginTop:0}}>Their expenses and balances in this trip will move to your account.</p>
+          <div className="stack">
+            <button className="btn sm" disabled={claimBusy} onClick={doClaim}>Yes, that's me</button>
+            <button className="btn sm ghost" disabled={claimBusy}
+              onClick={()=>directMember?doJoin():setClaimStep("pick")}>
+              {directMember?"Not me — I'm new":"Back"}
+            </button>
+          </div>
+        </div>
+      : joining
       ? <div className="card anim" style={{marginTop:12}}>
           <h3 className="h3" style={{marginTop:0}}>Sign in or create an account to join</h3>
-          <AuthScreen onAuth={doJoin} toast={toast}/>
+          <AuthScreen onAuth={afterAuth} toast={toast}/>
         </div>
-      : <button className="btn fab" onClick={()=>me?doJoin():setJoining(true)}>＋ Join this trip</button>}
+      : <button className="btn fab" onClick={()=>me?afterAuth():setJoining(true)}>＋ Join this trip</button>}
   </>;
 }
 
@@ -1862,9 +1923,9 @@ function App(){
   if(verificationContext.token)
     return <><VerifyEmailScreen token={verificationContext.token} emailHint={verificationContext.email}/><Toast msg={toastMsg}/></>;
 
-  const sharedMatch = hash.match(/^#\/shared\/(\w+)\/([^/?#]+)/);
+  const sharedMatch = hash.match(/^#\/shared\/(\w+)\/([^/?#]+)(?:\/(\w+))?/);
   if(sharedMatch)
-    return <><SharedTripScreen key={sharedMatch[1]+sharedMatch[2]} tripId={sharedMatch[1]} token={sharedMatch[2]}
+    return <><SharedTripScreen key={sharedMatch[1]+sharedMatch[2]+(sharedMatch[3]||"")} tripId={sharedMatch[1]} token={sharedMatch[2]} forMemberId={sharedMatch[3]||""}
       me={pb.authStore.isValid?pb.authStore.record:null} toast={toast}/><Toast msg={toastMsg}/></>;
 
   if(!pb.authStore.isValid)
