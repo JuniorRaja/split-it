@@ -373,6 +373,20 @@ function clearAuthPrefillEmail() {
     localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY);
   } catch {}
 }
+async function runLimited(items, worker, limit = 5) {
+  const out = new Array(items.length);
+  let i = 0;
+  async function lane() {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({
+    length: Math.min(limit, items.length)
+  }, lane));
+  return out;
+}
 function distribute(total, weights) {
   const cents = Math.round(total * 100);
   const tw = weights.reduce((a, b) => a + b, 0) || 1;
@@ -2068,14 +2082,20 @@ function ExpenseForm({
       let e;
       if (editing) {
         e = await col("expenses").update(expense.id, data);
-        await Promise.all(oldSplits.map(s => col("splits").delete(s.id)));
       } else {
         e = await col("expenses").create(data);
       }
-      await Promise.all(buildSplits().map(s => col("splits").create({
-        expense: e.id,
-        ...s
-      })));
+      let created = [];
+      try {
+        created = await runLimited(buildSplits(), s => col("splits").create({
+          expense: e.id,
+          ...s
+        }));
+        if (editing) await runLimited(oldSplits, s => col("splits").delete(s.id));
+      } catch (splitErr) {
+        await runLimited(created.filter(Boolean), s => col("splits").delete(s.id).catch(() => {}));
+        throw splitErr;
+      }
       track(editing ? "expense_edited" : "expense_added", {
         splitMode: mode,
         foreign
@@ -2621,18 +2641,19 @@ function Members({
       }), col("settlements").getFullList({
         filter: `trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`
       })]);
-      await Promise.all([...exps.map(e => col("expenses").update(e.id, {
+      const ops = [...exps.map(e => () => col("expenses").update(e.id, {
         paid_by: u.id
-      })), ...sps.map(s => col("splits").update(s.id, {
+      })), ...sps.map(s => () => col("splits").update(s.id, {
         user: u.id
-      })), ...settles.map(s => col("settlements").update(s.id, {
+      })), ...settles.map(s => () => col("settlements").update(s.id, {
         ...(s.from === placeholderId ? {
           from: u.id
         } : {}),
         ...(s.to === placeholderId ? {
           to: u.id
         } : {})
-      }))]);
+      }))];
+      await runLimited(ops, fn => fn());
       await col("trips").update(trip.id, {
         "members-": placeholderId,
         "members+": u.id

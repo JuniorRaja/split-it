@@ -231,6 +231,20 @@ function clearAuthPrefillEmail(){
   try { localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY); } catch {}
 }
 
+// run async work over items with limited concurrency (avoids slamming the API with N parallel requests)
+async function runLimited(items, worker, limit=5){
+  const out = new Array(items.length);
+  let i = 0;
+  async function lane(){
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, lane));
+  return out;
+}
+
 // split `total` among weights so the parts sum exactly to total
 function distribute(total, weights){
   const cents = Math.round(total*100);
@@ -1209,11 +1223,20 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
       let e;
       if(editing){
         e=await col("expenses").update(expense.id,data);
-        await Promise.all(oldSplits.map(s=>col("splits").delete(s.id)));
       }else{
         e=await col("expenses").create(data);
       }
-      await Promise.all(buildSplits().map(s=>col("splits").create({expense:e.id,...s})));
+      // create new splits first (limited concurrency, avoids rate-limit 429s on big rosters),
+      // only delete the old ones once every new split has landed — so a partial failure
+      // never leaves the expense under-split.
+      let created=[];
+      try{
+        created=await runLimited(buildSplits(), s=>col("splits").create({expense:e.id,...s}));
+        if(editing) await runLimited(oldSplits, s=>col("splits").delete(s.id));
+      }catch(splitErr){
+        await runLimited(created.filter(Boolean), s=>col("splits").delete(s.id).catch(()=>{}));
+        throw splitErr;
+      }
       track(editing ? "expense_edited" : "expense_added", { splitMode: mode, foreign });
       logActivity(trip.id,me.id,editing?"expense_edited":"expense_added",
         `${editing?"edited":"added"} “${description}” (${fmt(baseTotal,base)}${foreign?` · ${fmt(amt,cur)}`:""})`);
@@ -1493,14 +1516,15 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
         col("splits").getFullList({filter:`expense.trip="${trip.id}" && user="${placeholderId}"`}),
         col("settlements").getFullList({filter:`trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`}),
       ]);
-      await Promise.all([
-        ...exps.map(e=>col("expenses").update(e.id,{paid_by:u.id})),
-        ...sps.map(s=>col("splits").update(s.id,{user:u.id})),
-        ...settles.map(s=>col("settlements").update(s.id,{
+      const ops=[
+        ...exps.map(e=>()=>col("expenses").update(e.id,{paid_by:u.id})),
+        ...sps.map(s=>()=>col("splits").update(s.id,{user:u.id})),
+        ...settles.map(s=>()=>col("settlements").update(s.id,{
           ...(s.from===placeholderId?{from:u.id}:{}),
           ...(s.to===placeholderId?{to:u.id}:{}),
         })),
-      ]);
+      ];
+      await runLimited(ops, fn=>fn());
       await col("trips").update(trip.id,{"members-":placeholderId,"members+":u.id});
       logActivity(trip.id,me.id,"member_linked",`linked ${u.name} to existing entries`);
       setLinkFor(""); setLinkId(""); onDone(); toast(`Linked to ${u.name}`);
