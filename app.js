@@ -387,6 +387,34 @@ async function runLimited(items, worker, limit = 5) {
   }, lane));
   return out;
 }
+const BATCH_MAX_OPS = 40;
+async function replaceSplits(expenseId, newSplits, oldSplits) {
+  const opCount = newSplits.length + oldSplits.length;
+  if (opCount === 0) return;
+  if (opCount <= BATCH_MAX_OPS) {
+    try {
+      const b = pb.createBatch();
+      newSplits.forEach(s => b.collection(PREFIX + "splits").create({
+        expense: expenseId,
+        ...s
+      }));
+      oldSplits.forEach(s => b.collection(PREFIX + "splits").delete(s.id));
+      await b.send();
+      return;
+    } catch (batchErr) {}
+  }
+  let created = [];
+  try {
+    created = await runLimited(newSplits, s => col("splits").create({
+      expense: expenseId,
+      ...s
+    }));
+    await runLimited(oldSplits, s => col("splits").delete(s.id));
+  } catch (err) {
+    await runLimited(created.filter(Boolean), s => col("splits").delete(s.id).catch(() => {}));
+    throw err;
+  }
+}
 function distribute(total, weights) {
   const cents = Math.round(total * 100);
   const tw = weights.reduce((a, b) => a + b, 0) || 1;
@@ -543,6 +571,39 @@ function CurrencySelect({
     key: c.code,
     value: c.code
   }, c.sym.trim(), " ", c.code, " \u2014 ", c.name)));
+}
+function AvatarStack({
+  members,
+  max = 8,
+  size = 30
+}) {
+  const shown = members.slice(0, max);
+  const extra = members.length - shown.length;
+  const overlap = -Math.round(size * 0.3);
+  return React.createElement("span", {
+    className: "stack",
+    style: {
+      gap: 0
+    }
+  }, shown.map((m, i) => React.createElement("span", {
+    key: m.id,
+    style: {
+      marginLeft: i ? overlap : 0
+    }
+  }, React.createElement(Avatar, {
+    user: m,
+    size: size
+  }))), extra > 0 && React.createElement("span", {
+    className: "avatar",
+    style: {
+      width: size,
+      height: size,
+      marginLeft: overlap,
+      fontSize: size * .32,
+      background: "var(--ink)",
+      color: "var(--paper)"
+    }
+  }, "+", extra));
 }
 function Sheet({
   title,
@@ -986,20 +1047,11 @@ function TripsScreen({
       }
     }, t.name), React.createElement("div", {
       className: "rsub"
-    }, members.length, " member", members.length !== 1 ? "s" : "", " \xB7 ", normCur(t.currency))), React.createElement("span", {
-      className: "stack",
-      style: {
-        gap: 0
-      }
-    }, members.slice(0, 5).map((m, x) => React.createElement("span", {
-      key: m.id,
-      style: {
-        marginLeft: x ? -10 : 0
-      }
-    }, React.createElement(Avatar, {
-      user: m,
+    }, members.length, " member", members.length !== 1 ? "s" : "", " \xB7 ", normCur(t.currency))), React.createElement(AvatarStack, {
+      members: members,
+      max: 5,
       size: 32
-    })))));
+    }));
   }), React.createElement("button", {
     className: "btn fab",
     onClick: () => setShow(true)
@@ -1458,21 +1510,17 @@ function TripScreen({
       gap: 0,
       marginTop: 14
     }
-  }, members.map((m, i) => React.createElement("span", {
-    key: m.id,
-    style: {
-      marginLeft: i ? -9 : 0
-    }
-  }, React.createElement(Avatar, {
-    user: m,
+  }, React.createElement(AvatarStack, {
+    members: members,
+    max: 8,
     size: 30
-  }))), React.createElement("span", {
+  }), React.createElement("span", {
     style: {
       marginLeft: 10,
       fontSize: 12.5,
       opacity: .85
     }
-  }, members.map(m => first(m.name)).join(" · ")))), React.createElement("div", {
+  }, members.length, " member", members.length !== 1 ? "s" : ""))), React.createElement("div", {
     className: "tabs",
     role: "tablist"
   }, [["expenses", "Expenses"], ["balances", "Balances"], ["totals", "Totals"], ["activity", "Activity"]].map(([k, l]) => React.createElement("button", {
@@ -2096,17 +2144,7 @@ function ExpenseForm({
       } else {
         e = await col("expenses").create(data);
       }
-      let created = [];
-      try {
-        created = await runLimited(buildSplits(), s => col("splits").create({
-          expense: e.id,
-          ...s
-        }));
-        if (editing) await runLimited(oldSplits, s => col("splits").delete(s.id));
-      } catch (splitErr) {
-        await runLimited(created.filter(Boolean), s => col("splits").delete(s.id).catch(() => {}));
-        throw splitErr;
-      }
+      await replaceSplits(e.id, buildSplits(), editing ? oldSplits : []);
       track(editing ? "expense_edited" : "expense_added", {
         splitMode: mode,
         foreign
@@ -2323,8 +2361,12 @@ function ExpenseDetail({
 }) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showAllSplits, setShowAllSplits] = useState(false);
   const ecur = normCur(e.currency || base);
   const foreign = ecur !== base;
+  const COMPACT_SPLITS = 6;
+  const splitsEqual = e.split_mode === "equal" && splits.length > 0 && splits.every(s => Math.abs(s.amount - splits[0].amount) < 0.02);
+  const visibleSplits = showAllSplits || splits.length <= COMPACT_SPLITS ? splits : splits.slice(0, COMPACT_SPLITS);
   const comments = activity.filter(a => {
     if (a.action !== "comment") return false;
     try {
@@ -2378,12 +2420,28 @@ function ExpenseDetail({
     className: "mono mut"
   }, "\u2248 ", fmt(baseAmt(e), base), " @ ", +Number(e.fx_rate || 1).toFixed(4))), React.createElement("br", null), "Paid by ", React.createElement("b", null, first(uById(e.paid_by).name)), " on ", niceDate(e.date || e.created), " \xB7 split ", modeLabel, e.notes && React.createElement(React.Fragment, null, React.createElement("br", null), "\uD83D\uDDD2 ", e.notes)), React.createElement("h3", {
     className: "h3"
-  }, "Split breakdown", foreign ? ` · in ${base}` : ""), React.createElement("div", {
+  }, "Split breakdown", foreign ? ` · in ${base}` : ""), React.createElement("p", {
+    className: "sub",
+    style: {
+      marginTop: 0,
+      marginBottom: 8
+    }
+  }, React.createElement(AvatarStack, {
+    members: splits.map(s => uById(s.user)),
+    max: 10,
+    size: 24
+  }), React.createElement("span", {
+    style: {
+      marginLeft: 8
+    }
+  }, "Split ", modeLabel, " among ", splits.length, " ", splits.length === 1 ? "person" : "people", splitsEqual && React.createElement(React.Fragment, null, " \xB7 ", React.createElement("b", {
+    className: "mono"
+  }, fmt(splits[0].amount, base)), " each"))), React.createElement("div", {
     className: "card",
     style: {
       padding: "6px 14px"
     }
-  }, splits.map((s, i) => React.createElement("div", {
+  }, visibleSplits.map((s, i) => React.createElement("div", {
     key: s.id,
     className: "rrow anim",
     style: {
@@ -2401,7 +2459,16 @@ function ExpenseDetail({
     }
   }, uById(s.user).name, s.user === me.id ? " (you)" : "")), React.createElement("span", {
     className: "ramt"
-  }, fmt(s.amount, base), e.split_mode === "percent" && s.share != null ? React.createElement("small", null, s.share, "%") : null, e.split_mode === "shares" && s.share != null ? React.createElement("small", null, s.share, " share", s.share !== 1 ? "s" : "") : null, e.split_mode === "exact" && s.share != null && foreign ? React.createElement("small", null, fmt(s.share, ecur)) : null)))), React.createElement("h3", {
+  }, fmt(s.amount, base), e.split_mode === "percent" && s.share != null ? React.createElement("small", null, s.share, "%") : null, e.split_mode === "shares" && s.share != null ? React.createElement("small", null, s.share, " share", s.share !== 1 ? "s" : "") : null, e.split_mode === "exact" && s.share != null && foreign ? React.createElement("small", null, fmt(s.share, ecur)) : null))), splits.length > COMPACT_SPLITS && React.createElement("button", {
+    className: "rrow",
+    style: {
+      justifyContent: "center",
+      color: "var(--green-ink)",
+      fontWeight: 600,
+      fontSize: 13.5
+    },
+    onClick: () => setShowAllSplits(x => !x)
+  }, showAllSplits ? "Show less" : `Show all ${splits.length}`)), React.createElement("h3", {
     className: "h3"
   }, "Comments ", comments.length ? `(${comments.length})` : ""), React.createElement("div", {
     className: "card",
@@ -2661,7 +2728,29 @@ function Members({
           to: u.id
         } : {})
       }))];
-      await runLimited(ops, fn => fn());
+      let batchedOk = false;
+      if (ops.length > 0 && ops.length <= BATCH_MAX_OPS) {
+        try {
+          const b = pb.createBatch();
+          exps.forEach(ex => b.collection(PREFIX + "expenses").update(ex.id, {
+            paid_by: u.id
+          }));
+          sps.forEach(s => b.collection(PREFIX + "splits").update(s.id, {
+            user: u.id
+          }));
+          settles.forEach(s => b.collection(PREFIX + "settlements").update(s.id, {
+            ...(s.from === placeholderId ? {
+              from: u.id
+            } : {}),
+            ...(s.to === placeholderId ? {
+              to: u.id
+            } : {})
+          }));
+          await b.send();
+          batchedOk = true;
+        } catch (batchErr) {}
+      }
+      if (!batchedOk) await runLimited(ops, fn => fn());
       await col("trips").update(trip.id, {
         "members-": placeholderId,
         "members+": u.id
@@ -3069,21 +3158,17 @@ function SharedTripScreen({
       gap: 0,
       marginTop: 14
     }
-  }, members.map((m, i) => React.createElement("span", {
-    key: m.id,
-    style: {
-      marginLeft: i ? -9 : 0
-    }
-  }, React.createElement(Avatar, {
-    user: m,
+  }, React.createElement(AvatarStack, {
+    members: members,
+    max: 8,
     size: 30
-  }))), React.createElement("span", {
+  }), React.createElement("span", {
     style: {
       marginLeft: 10,
       fontSize: 12.5,
       opacity: .85
     }
-  }, members.map(m => first(m.name)).join(" · ")))), React.createElement("h3", {
+  }, members.length, " member", members.length !== 1 ? "s" : ""))), React.createElement("h3", {
     className: "h3"
   }, "Balances"), React.createElement("div", {
     className: "card",
