@@ -231,20 +231,6 @@ function clearAuthPrefillEmail(){
   try { localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY); } catch {}
 }
 
-// run async work over items with limited concurrency (avoids slamming the API with N parallel requests)
-async function runLimited(items, worker, limit=5){
-  const out = new Array(items.length);
-  let i = 0;
-  async function lane(){
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await worker(items[idx], idx);
-    }
-  }
-  await Promise.all(Array.from({length: Math.min(limit, items.length)}, lane));
-  return out;
-}
-
 // split `total` among weights so the parts sum exactly to total
 function distribute(total, weights){
   const cents = Math.round(total*100);
@@ -341,12 +327,6 @@ function Avatar({user,size=36}){
     fontSize:size*.36}}>{initials(user?.name||user?.email)}</span>;
 }
 function Toast({msg}){ return msg ? <div className="toast">{msg}</div> : null; }
-
-function CurrencySelect({value,onChange,disabled}){
-  return <select value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>
-    {CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.sym.trim()} {c.code} — {c.name}</option>)}
-  </select>;
-}
 
 function Sheet({title,onClose,children}){
   const ref=useRef(null); const drag=useRef(null);
@@ -619,7 +599,9 @@ function TripsScreen({me,toast}){
       <input value={f.name} maxLength={MAX_LEN.tripName}
         onChange={e=>setF({...f,name:e.target.value})} placeholder="Weekend in Goa" autoFocus/>
       <label>Base currency (balances are kept in this)</label>
-      <CurrencySelect value={f.currency} onChange={v=>setF({...f,currency:v})}/>
+      <div className="chips">{CURRENCIES.map(c=>
+        <button key={c.code} className={"chip"+(f.currency===c.code?" on":"")}
+          onClick={()=>setF({...f,currency:c.code})}>{c.sym.trim()} {c.code}</button>)}</div>
       <button className="btn" style={{marginTop:24}} disabled={busy||!f.name.trim()} onClick={create}>Create trip</button>
     </Sheet>}
   </>;
@@ -1227,20 +1209,11 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
       let e;
       if(editing){
         e=await col("expenses").update(expense.id,data);
+        await Promise.all(oldSplits.map(s=>col("splits").delete(s.id)));
       }else{
         e=await col("expenses").create(data);
       }
-      // create new splits first (limited concurrency, avoids rate-limit 429s on big rosters),
-      // only delete the old ones once every new split has landed — so a partial failure
-      // never leaves the expense under-split.
-      let created=[];
-      try{
-        created=await runLimited(buildSplits(), s=>col("splits").create({expense:e.id,...s}));
-        if(editing) await runLimited(oldSplits, s=>col("splits").delete(s.id));
-      }catch(splitErr){
-        await runLimited(created.filter(Boolean), s=>col("splits").delete(s.id).catch(()=>{}));
-        throw splitErr;
-      }
+      await Promise.all(buildSplits().map(s=>col("splits").create({expense:e.id,...s})));
       track(editing ? "expense_edited" : "expense_added", { splitMode: mode, foreign });
       logActivity(trip.id,me.id,editing?"expense_edited":"expense_added",
         `${editing?"edited":"added"} “${description}” (${fmt(baseTotal,base)}${foreign?` · ${fmt(amt,cur)}`:""})`);
@@ -1257,7 +1230,11 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
       onChange={e=>setF({...f,description:e.target.value})}
       placeholder="Dinner at the shack" autoFocus={!editing}/>
     <label>Currency</label>
-    <CurrencySelect value={cur} onChange={setCur}/>
+    <div className="chips scrollx">
+      {CURRENCIES.map(c=>
+        <button key={c.code} className={"chip"+(cur===c.code?" on":"")}
+          onClick={()=>setCur(c.code)}>{c.sym.trim()} {c.code}</button>)}
+    </div>
     <div className="grid2">
       <div><label>Amount ({curOf(cur).sym.trim()})</label>
         <input type="number" min="0" step="any" inputMode="decimal" value={f.amount}
@@ -1516,15 +1493,14 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
         col("splits").getFullList({filter:`expense.trip="${trip.id}" && user="${placeholderId}"`}),
         col("settlements").getFullList({filter:`trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`}),
       ]);
-      const ops=[
-        ...exps.map(e=>()=>col("expenses").update(e.id,{paid_by:u.id})),
-        ...sps.map(s=>()=>col("splits").update(s.id,{user:u.id})),
-        ...settles.map(s=>()=>col("settlements").update(s.id,{
+      await Promise.all([
+        ...exps.map(e=>col("expenses").update(e.id,{paid_by:u.id})),
+        ...sps.map(s=>col("splits").update(s.id,{user:u.id})),
+        ...settles.map(s=>col("settlements").update(s.id,{
           ...(s.from===placeholderId?{from:u.id}:{}),
           ...(s.to===placeholderId?{to:u.id}:{}),
         })),
-      ];
-      await runLimited(ops, fn=>fn());
+      ]);
       await col("trips").update(trip.id,{"members-":placeholderId,"members+":u.id});
       logActivity(trip.id,me.id,"member_linked",`linked ${u.name} to existing entries`);
       setLinkFor(""); setLinkId(""); onDone(); toast(`Linked to ${u.name}`);
@@ -1646,7 +1622,11 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
       <input value={name} maxLength={MAX_LEN.tripName} disabled={!isOwner}
         onChange={e=>setName(e.target.value)}/>
       <label>Base currency{curLocked?" (locked — trip has expenses)":""}</label>
-      <CurrencySelect value={currency} onChange={setCurrency} disabled={curLocked||!isOwner}/>
+      <div className="chips" style={(curLocked||!isOwner)?{opacity:.5,pointerEvents:"none"}:null}>
+        {CURRENCIES.map(c=>
+          <button key={c.code} className={"chip"+(currency===c.code?" on":"")}
+            onClick={()=>setCurrency(c.code)}>{c.sym.trim()} {c.code}</button>)}
+      </div>
       {isOwner
         ? <button className="btn ghost" style={{marginTop:16}} onClick={saveSettings}>Save details</button>
         : <p className="sub" style={{marginTop:14}}>Only the trip owner can update trip details.</p>}

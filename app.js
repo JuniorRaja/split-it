@@ -373,20 +373,6 @@ function clearAuthPrefillEmail() {
     localStorage.removeItem(AUTH_PREFILL_EMAIL_KEY);
   } catch {}
 }
-async function runLimited(items, worker, limit = 5) {
-  const out = new Array(items.length);
-  let i = 0;
-  async function lane() {
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await worker(items[idx], idx);
-    }
-  }
-  await Promise.all(Array.from({
-    length: Math.min(limit, items.length)
-  }, lane));
-  return out;
-}
 function distribute(total, weights) {
   const cents = Math.round(total * 100);
   const tw = weights.reduce((a, b) => a + b, 0) || 1;
@@ -529,20 +515,6 @@ function Toast({
   return msg ? React.createElement("div", {
     className: "toast"
   }, msg) : null;
-}
-function CurrencySelect({
-  value,
-  onChange,
-  disabled
-}) {
-  return React.createElement("select", {
-    value: value,
-    disabled: disabled,
-    onChange: e => onChange(e.target.value)
-  }, CURRENCIES.map(c => React.createElement("option", {
-    key: c.code,
-    value: c.code
-  }, c.sym.trim(), " ", c.code, " \u2014 ", c.name)));
 }
 function Sheet({
   title,
@@ -1015,13 +987,16 @@ function TripsScreen({
     }),
     placeholder: "Weekend in Goa",
     autoFocus: true
-  }), React.createElement("label", null, "Base currency (balances are kept in this)"), React.createElement(CurrencySelect, {
-    value: f.currency,
-    onChange: v => setF({
+  }), React.createElement("label", null, "Base currency (balances are kept in this)"), React.createElement("div", {
+    className: "chips"
+  }, CURRENCIES.map(c => React.createElement("button", {
+    key: c.code,
+    className: "chip" + (f.currency === c.code ? " on" : ""),
+    onClick: () => setF({
       ...f,
-      currency: v
+      currency: c.code
     })
-  }), React.createElement("button", {
+  }, c.sym.trim(), " ", c.code))), React.createElement("button", {
     className: "btn",
     style: {
       marginTop: 24
@@ -2093,20 +2068,14 @@ function ExpenseForm({
       let e;
       if (editing) {
         e = await col("expenses").update(expense.id, data);
+        await Promise.all(oldSplits.map(s => col("splits").delete(s.id)));
       } else {
         e = await col("expenses").create(data);
       }
-      let created = [];
-      try {
-        created = await runLimited(buildSplits(), s => col("splits").create({
-          expense: e.id,
-          ...s
-        }));
-        if (editing) await runLimited(oldSplits, s => col("splits").delete(s.id));
-      } catch (splitErr) {
-        await runLimited(created.filter(Boolean), s => col("splits").delete(s.id).catch(() => {}));
-        throw splitErr;
-      }
+      await Promise.all(buildSplits().map(s => col("splits").create({
+        expense: e.id,
+        ...s
+      })));
       track(editing ? "expense_edited" : "expense_added", {
         splitMode: mode,
         foreign
@@ -2131,10 +2100,13 @@ function ExpenseForm({
     }),
     placeholder: "Dinner at the shack",
     autoFocus: !editing
-  }), React.createElement("label", null, "Currency"), React.createElement(CurrencySelect, {
-    value: cur,
-    onChange: setCur
-  }), React.createElement("div", {
+  }), React.createElement("label", null, "Currency"), React.createElement("div", {
+    className: "chips scrollx"
+  }, CURRENCIES.map(c => React.createElement("button", {
+    key: c.code,
+    className: "chip" + (cur === c.code ? " on" : ""),
+    onClick: () => setCur(c.code)
+  }, c.sym.trim(), " ", c.code))), React.createElement("div", {
     className: "grid2"
   }, React.createElement("div", null, React.createElement("label", null, "Amount (", curOf(cur).sym.trim(), ")"), React.createElement("input", {
     type: "number",
@@ -2649,19 +2621,18 @@ function Members({
       }), col("settlements").getFullList({
         filter: `trip="${trip.id}" && (from="${placeholderId}" || to="${placeholderId}")`
       })]);
-      const ops = [...exps.map(e => () => col("expenses").update(e.id, {
+      await Promise.all([...exps.map(e => col("expenses").update(e.id, {
         paid_by: u.id
-      })), ...sps.map(s => () => col("splits").update(s.id, {
+      })), ...sps.map(s => col("splits").update(s.id, {
         user: u.id
-      })), ...settles.map(s => () => col("settlements").update(s.id, {
+      })), ...settles.map(s => col("settlements").update(s.id, {
         ...(s.from === placeholderId ? {
           from: u.id
         } : {}),
         ...(s.to === placeholderId ? {
           to: u.id
         } : {})
-      }))];
-      await runLimited(ops, fn => fn());
+      }))]);
       await col("trips").update(trip.id, {
         "members-": placeholderId,
         "members+": u.id
@@ -2911,11 +2882,17 @@ function Members({
     maxLength: MAX_LEN.tripName,
     disabled: !isOwner,
     onChange: e => setName(e.target.value)
-  }), React.createElement("label", null, "Base currency", curLocked ? " (locked — trip has expenses)" : ""), React.createElement(CurrencySelect, {
-    value: currency,
-    onChange: setCurrency,
-    disabled: curLocked || !isOwner
-  }), isOwner ? React.createElement("button", {
+  }), React.createElement("label", null, "Base currency", curLocked ? " (locked — trip has expenses)" : ""), React.createElement("div", {
+    className: "chips",
+    style: curLocked || !isOwner ? {
+      opacity: .5,
+      pointerEvents: "none"
+    } : null
+  }, CURRENCIES.map(c => React.createElement("button", {
+    key: c.code,
+    className: "chip" + (currency === c.code ? " on" : ""),
+    onClick: () => setCurrency(c.code)
+  }, c.sym.trim(), " ", c.code))), isOwner ? React.createElement("button", {
     className: "btn ghost",
     style: {
       marginTop: 16
