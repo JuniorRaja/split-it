@@ -245,6 +245,34 @@ async function runLimited(items, worker, limit=5){
   return out;
 }
 
+// Replace `oldSplits` with `newSplits` for an expense in ONE atomic batch request —
+// avoids firing a storm of parallel requests that trips the server's rate limit.
+// Needs "Batch requests" enabled in PocketBase → Settings → Application; if that's off
+// (or the batch otherwise fails), falls back to limited-concurrency requests that still
+// create-then-delete, so a failure never leaves the expense under-split.
+const BATCH_MAX_OPS = 40; // stay under PocketBase's default per-batch request cap
+async function replaceSplits(expenseId, newSplits, oldSplits){
+  const opCount = newSplits.length + oldSplits.length;
+  if (opCount === 0) return;
+  if (opCount <= BATCH_MAX_OPS) {
+    try{
+      const b = pb.createBatch();
+      newSplits.forEach(s => b.collection(PREFIX+"splits").create({expense:expenseId,...s}));
+      oldSplits.forEach(s => b.collection(PREFIX+"splits").delete(s.id));
+      await b.send();
+      return;
+    }catch(batchErr){ /* batch unavailable/disabled — fall through to the safe path below */ }
+  }
+  let created=[];
+  try{
+    created=await runLimited(newSplits, s=>col("splits").create({expense:expenseId,...s}));
+    await runLimited(oldSplits, s=>col("splits").delete(s.id));
+  }catch(err){
+    await runLimited(created.filter(Boolean), s=>col("splits").delete(s.id).catch(()=>{}));
+    throw err;
+  }
+}
+
 // split `total` among weights so the parts sum exactly to total
 function distribute(total, weights){
   const cents = Math.round(total*100);
@@ -346,6 +374,18 @@ function CurrencySelect({value,onChange,disabled}){
   return <select value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>
     {CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.sym.trim()} {c.code} — {c.name}</option>)}
   </select>;
+}
+
+// overlapping avatar row that caps itself at `max` and folds the rest into a "+N" badge
+function AvatarStack({members,max=8,size=30}){
+  const shown=members.slice(0,max);
+  const extra=members.length-shown.length;
+  const overlap=-Math.round(size*0.3);
+  return <span className="stack" style={{gap:0}}>
+    {shown.map((m,i)=><span key={m.id} style={{marginLeft:i?overlap:0}}><Avatar user={m} size={size}/></span>)}
+    {extra>0 && <span className="avatar" style={{width:size,height:size,marginLeft:overlap,
+      fontSize:size*.32,background:"var(--ink)",color:"var(--paper)"}}>+{extra}</span>}
+  </span>;
 }
 
 function Sheet({title,onClose,children}){
@@ -608,9 +648,7 @@ function TripsScreen({me,toast}){
           <div className="rtitle" style={{fontFamily:"var(--disp)",fontSize:18}}>{t.name}</div>
           <div className="rsub">{members.length} member{members.length!==1?"s":""} · {normCur(t.currency)}</div>
         </div>
-        <span className="stack" style={{gap:0}}>
-          {members.slice(0,5).map((m,x)=><span key={m.id} style={{marginLeft:x?-10:0}}><Avatar user={m} size={32}/></span>)}
-        </span>
+        <AvatarStack members={members} max={5} size={32}/>
       </button>;
     })}
     <button className="btn fab" onClick={()=>setShow(true)}>＋ New trip</button>
@@ -899,8 +937,8 @@ function TripScreen({tripId,me,toast}){
           : <>you owe <b className="mono">{fmt(myNet,base)}</b></>}
       </p>
       <div className="stack" style={{gap:0,marginTop:14}}>
-        {members.map((m,i)=><span key={m.id} style={{marginLeft:i?-9:0}}><Avatar user={m} size={30}/></span>)}
-        <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.map(m=>first(m.name)).join(" · ")}</span>
+        <AvatarStack members={members} max={8} size={30}/>
+        <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.length} member{members.length!==1?"s":""}</span>
       </div>
     </div>
 
@@ -1230,17 +1268,7 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
       }else{
         e=await col("expenses").create(data);
       }
-      // create new splits first (limited concurrency, avoids rate-limit 429s on big rosters),
-      // only delete the old ones once every new split has landed — so a partial failure
-      // never leaves the expense under-split.
-      let created=[];
-      try{
-        created=await runLimited(buildSplits(), s=>col("splits").create({expense:e.id,...s}));
-        if(editing) await runLimited(oldSplits, s=>col("splits").delete(s.id));
-      }catch(splitErr){
-        await runLimited(created.filter(Boolean), s=>col("splits").delete(s.id).catch(()=>{}));
-        throw splitErr;
-      }
+      await replaceSplits(e.id, buildSplits(), editing?oldSplits:[]);
       track(editing ? "expense_edited" : "expense_added", { splitMode: mode, foreign });
       logActivity(trip.id,me.id,editing?"expense_edited":"expense_added",
         `${editing?"edited":"added"} “${description}” (${fmt(baseTotal,base)}${foreign?` · ${fmt(amt,cur)}`:""})`);
@@ -1343,8 +1371,12 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
 /* ================= expense detail ================= */
 function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,canManage,onEdit,onDelete,onClose,onRefresh}){
   const [comment,setComment]=useState(""); const [busy,setBusy]=useState(false);
+  const [showAllSplits,setShowAllSplits]=useState(false);
   const ecur=normCur(e.currency||base);
   const foreign=ecur!==base;
+  const COMPACT_SPLITS=6;
+  const splitsEqual=e.split_mode==="equal"&&splits.length>0&&splits.every(s=>Math.abs(s.amount-splits[0].amount)<0.02);
+  const visibleSplits=showAllSplits||splits.length<=COMPACT_SPLITS?splits:splits.slice(0,COMPACT_SPLITS);
   const comments=activity.filter(a=>{
     if(a.action!=="comment")return false;
     try{ return JSON.parse(a.detail).expense===e.id; }catch{ return false; }
@@ -1369,8 +1401,15 @@ function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,canMa
       {e.notes && <><br/>🗒 {e.notes}</>}
     </p>
     <h3 className="h3">Split breakdown{foreign?` · in ${base}`:""}</h3>
+    <p className="sub" style={{marginTop:0,marginBottom:8}}>
+      <AvatarStack members={splits.map(s=>uById(s.user))} max={10} size={24}/>
+      <span style={{marginLeft:8}}>
+        Split {modeLabel} among {splits.length} {splits.length===1?"person":"people"}
+        {splitsEqual && <> · <b className="mono">{fmt(splits[0].amount,base)}</b> each</>}
+      </span>
+    </p>
     <div className="card" style={{padding:"6px 14px"}}>
-      {splits.map((s,i)=>
+      {visibleSplits.map((s,i)=>
         <div key={s.id} className="rrow anim" style={{animationDelay:`${i*35}ms`}}>
           <Avatar user={uById(s.user)} size={30}/>
           <div className="rmain"><div className="rtitle" style={{fontSize:14}}>
@@ -1381,6 +1420,11 @@ function ExpenseDetail({expense:e,splits,activity,me,base,uById,trip,toast,canMa
             {e.split_mode==="exact"&&s.share!=null&&foreign?<small>{fmt(s.share,ecur)}</small>:null}
           </span>
         </div>)}
+      {splits.length>COMPACT_SPLITS &&
+        <button className="rrow" style={{justifyContent:"center",color:"var(--green-ink)",fontWeight:600,fontSize:13.5}}
+          onClick={()=>setShowAllSplits(x=>!x)}>
+          {showAllSplits?"Show less":`Show all ${splits.length}`}
+        </button>}
     </div>
     <h3 className="h3">Comments {comments.length?`(${comments.length})`:""}</h3>
     <div className="card" style={{padding:"6px 14px"}}>
@@ -1524,7 +1568,21 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
           ...(s.to===placeholderId?{to:u.id}:{}),
         })),
       ];
-      await runLimited(ops, fn=>fn());
+      let batchedOk=false;
+      if(ops.length>0 && ops.length<=BATCH_MAX_OPS){
+        try{
+          const b=pb.createBatch();
+          exps.forEach(ex=>b.collection(PREFIX+"expenses").update(ex.id,{paid_by:u.id}));
+          sps.forEach(s=>b.collection(PREFIX+"splits").update(s.id,{user:u.id}));
+          settles.forEach(s=>b.collection(PREFIX+"settlements").update(s.id,{
+            ...(s.from===placeholderId?{from:u.id}:{}),
+            ...(s.to===placeholderId?{to:u.id}:{}),
+          }));
+          await b.send();
+          batchedOk=true;
+        }catch(batchErr){ /* batch unavailable/disabled — fall through to the safe path below */ }
+      }
+      if(!batchedOk) await runLimited(ops, fn=>fn());
       await col("trips").update(trip.id,{"members-":placeholderId,"members+":u.id});
       logActivity(trip.id,me.id,"member_linked",`linked ${u.name} to existing entries`);
       setLinkFor(""); setLinkId(""); onDone(); toast(`Linked to ${u.name}`);
@@ -1720,8 +1778,8 @@ function SharedTripScreen({tripId,token,me,toast}){
       <span className="k">Trip total · {base}</span>
       <div className="big">{fmt(total,base)}</div>
       <div className="stack" style={{gap:0,marginTop:14}}>
-        {members.map((m,i)=><span key={m.id} style={{marginLeft:i?-9:0}}><Avatar user={m} size={30}/></span>)}
-        <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.map(m=>first(m.name)).join(" · ")}</span>
+        <AvatarStack members={members} max={8} size={30}/>
+        <span style={{marginLeft:10,fontSize:12.5,opacity:.85}}>{members.length} member{members.length!==1?"s":""}</span>
       </div>
     </div>
 
