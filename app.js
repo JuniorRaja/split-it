@@ -530,6 +530,20 @@ function Toast({
     className: "toast"
   }, msg) : null;
 }
+function CurrencySelect({
+  value,
+  onChange,
+  disabled
+}) {
+  return React.createElement("select", {
+    value: value,
+    disabled: disabled,
+    onChange: e => onChange(e.target.value)
+  }, CURRENCIES.map(c => React.createElement("option", {
+    key: c.code,
+    value: c.code
+  }, c.sym.trim(), " ", c.code, " \u2014 ", c.name)));
+}
 function Sheet({
   title,
   onClose,
@@ -1001,16 +1015,13 @@ function TripsScreen({
     }),
     placeholder: "Weekend in Goa",
     autoFocus: true
-  }), React.createElement("label", null, "Base currency (balances are kept in this)"), React.createElement("div", {
-    className: "chips"
-  }, CURRENCIES.map(c => React.createElement("button", {
-    key: c.code,
-    className: "chip" + (f.currency === c.code ? " on" : ""),
-    onClick: () => setF({
+  }), React.createElement("label", null, "Base currency (balances are kept in this)"), React.createElement(CurrencySelect, {
+    value: f.currency,
+    onChange: v => setF({
       ...f,
-      currency: c.code
+      currency: v
     })
-  }, c.sym.trim(), " ", c.code))), React.createElement("button", {
+  }), React.createElement("button", {
     className: "btn",
     style: {
       marginTop: 24
@@ -2120,13 +2131,10 @@ function ExpenseForm({
     }),
     placeholder: "Dinner at the shack",
     autoFocus: !editing
-  }), React.createElement("label", null, "Currency"), React.createElement("div", {
-    className: "chips scrollx"
-  }, CURRENCIES.map(c => React.createElement("button", {
-    key: c.code,
-    className: "chip" + (cur === c.code ? " on" : ""),
-    onClick: () => setCur(c.code)
-  }, c.sym.trim(), " ", c.code))), React.createElement("div", {
+  }), React.createElement("label", null, "Currency"), React.createElement(CurrencySelect, {
+    value: cur,
+    onChange: setCur
+  }), React.createElement("div", {
     className: "grid2"
   }, React.createElement("div", null, React.createElement("label", null, "Amount (", curOf(cur).sym.trim(), ")"), React.createElement("input", {
     type: "number",
@@ -2903,17 +2911,11 @@ function Members({
     maxLength: MAX_LEN.tripName,
     disabled: !isOwner,
     onChange: e => setName(e.target.value)
-  }), React.createElement("label", null, "Base currency", curLocked ? " (locked — trip has expenses)" : ""), React.createElement("div", {
-    className: "chips",
-    style: curLocked || !isOwner ? {
-      opacity: .5,
-      pointerEvents: "none"
-    } : null
-  }, CURRENCIES.map(c => React.createElement("button", {
-    key: c.code,
-    className: "chip" + (currency === c.code ? " on" : ""),
-    onClick: () => setCurrency(c.code)
-  }, c.sym.trim(), " ", c.code))), isOwner ? React.createElement("button", {
+  }), React.createElement("label", null, "Base currency", curLocked ? " (locked — trip has expenses)" : ""), React.createElement(CurrencySelect, {
+    value: currency,
+    onChange: setCurrency,
+    disabled: curLocked || !isOwner
+  }), isOwner ? React.createElement("button", {
     className: "btn ghost",
     style: {
       marginTop: 16

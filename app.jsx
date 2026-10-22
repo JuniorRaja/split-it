@@ -342,6 +342,12 @@ function Avatar({user,size=36}){
 }
 function Toast({msg}){ return msg ? <div className="toast">{msg}</div> : null; }
 
+function CurrencySelect({value,onChange,disabled}){
+  return <select value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>
+    {CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.sym.trim()} {c.code} — {c.name}</option>)}
+  </select>;
+}
+
 function Sheet({title,onClose,children}){
   const ref=useRef(null); const drag=useRef(null);
   useEffect(()=>{
@@ -613,9 +619,7 @@ function TripsScreen({me,toast}){
       <input value={f.name} maxLength={MAX_LEN.tripName}
         onChange={e=>setF({...f,name:e.target.value})} placeholder="Weekend in Goa" autoFocus/>
       <label>Base currency (balances are kept in this)</label>
-      <div className="chips">{CURRENCIES.map(c=>
-        <button key={c.code} className={"chip"+(f.currency===c.code?" on":"")}
-          onClick={()=>setF({...f,currency:c.code})}>{c.sym.trim()} {c.code}</button>)}</div>
+      <CurrencySelect value={f.currency} onChange={v=>setF({...f,currency:v})}/>
       <button className="btn" style={{marginTop:24}} disabled={busy||!f.name.trim()} onClick={create}>Create trip</button>
     </Sheet>}
   </>;
@@ -1253,11 +1257,7 @@ function ExpenseForm({trip,members,me,base,expense,splits:oldSplits,onDone,onClo
       onChange={e=>setF({...f,description:e.target.value})}
       placeholder="Dinner at the shack" autoFocus={!editing}/>
     <label>Currency</label>
-    <div className="chips scrollx">
-      {CURRENCIES.map(c=>
-        <button key={c.code} className={"chip"+(cur===c.code?" on":"")}
-          onClick={()=>setCur(c.code)}>{c.sym.trim()} {c.code}</button>)}
-    </div>
+    <CurrencySelect value={cur} onChange={setCur}/>
     <div className="grid2">
       <div><label>Amount ({curOf(cur).sym.trim()})</label>
         <input type="number" min="0" step="any" inputMode="decimal" value={f.amount}
@@ -1646,11 +1646,7 @@ function Members({trip,members,me,expenseCount,onDone,onClose,toast}){
       <input value={name} maxLength={MAX_LEN.tripName} disabled={!isOwner}
         onChange={e=>setName(e.target.value)}/>
       <label>Base currency{curLocked?" (locked — trip has expenses)":""}</label>
-      <div className="chips" style={(curLocked||!isOwner)?{opacity:.5,pointerEvents:"none"}:null}>
-        {CURRENCIES.map(c=>
-          <button key={c.code} className={"chip"+(currency===c.code?" on":"")}
-            onClick={()=>setCurrency(c.code)}>{c.sym.trim()} {c.code}</button>)}
-      </div>
+      <CurrencySelect value={currency} onChange={setCurrency} disabled={curLocked||!isOwner}/>
       {isOwner
         ? <button className="btn ghost" style={{marginTop:16}} onClick={saveSettings}>Save details</button>
         : <p className="sub" style={{marginTop:14}}>Only the trip owner can update trip details.</p>}
