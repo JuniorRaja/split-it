@@ -531,7 +531,14 @@ function AuthScreen({onAuth,toast}){
     <h1 className="disp" style={{fontSize:38}}>{APP_NAME}</h1>
     <p className="sub">{APP_TAGLINE} Every cent accounted for.</p>
 
-    <div className="card anim-pop" style={{marginTop:20}}>
+    {signupAllowed && <div className="tabs" role="tablist" style={{marginTop:20}}>
+      <button role="tab" aria-selected={!signupMode} className={!signupMode?"on":""}
+        onClick={()=>{setSignupMode(false);setErr("")}}>Sign in</button>
+      <button role="tab" aria-selected={signupMode} className={signupMode?"on":""}
+        onClick={()=>{setSignupMode(true);setErr("")}}>Sign up</button>
+    </div>}
+
+    <div className="card anim-pop" style={signupAllowed?{}:{marginTop:20}}>
       {signupMode && <>
         <label>Full name</label>
         <input value={name} maxLength={64} onChange={e=>setName(e.target.value)} placeholder="Jane Doe" autoFocus/>
@@ -550,11 +557,6 @@ function AuthScreen({onAuth,toast}){
       <button className="btn" style={{marginTop:16}} disabled={busy||!pw||!email||(signupMode&&!name)} onClick={submit}>
         {busy?(signupMode?"Creating account…":"Signing in…"):(signupMode?"Create account":"Sign in")}</button>
     </div>
-
-    {signupAllowed && <p className="sub" style={{textAlign:"center",marginTop:12}}>
-      <a onClick={()=>{setSignupMode(!signupMode);setErr("")}}>
-        {signupMode?"Already have an account? Sign in":"New here? Create an account"}</a>
-    </p>}
   </div>;
 }
 

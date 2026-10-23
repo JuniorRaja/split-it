@@ -825,9 +825,31 @@ function AuthScreen({
     }
   }, APP_NAME), React.createElement("p", {
     className: "sub"
-  }, APP_TAGLINE, " Every cent accounted for."), React.createElement("div", {
-    className: "card anim-pop",
+  }, APP_TAGLINE, " Every cent accounted for."), signupAllowed && React.createElement("div", {
+    className: "tabs",
+    role: "tablist",
     style: {
+      marginTop: 20
+    }
+  }, React.createElement("button", {
+    role: "tab",
+    "aria-selected": !signupMode,
+    className: !signupMode ? "on" : "",
+    onClick: () => {
+      setSignupMode(false);
+      setErr("");
+    }
+  }, "Sign in"), React.createElement("button", {
+    role: "tab",
+    "aria-selected": signupMode,
+    className: signupMode ? "on" : "",
+    onClick: () => {
+      setSignupMode(true);
+      setErr("");
+    }
+  }, "Sign up")), React.createElement("div", {
+    className: "card anim-pop",
+    style: signupAllowed ? {} : {
       marginTop: 20
     }
   }, signupMode && React.createElement(React.Fragment, null, React.createElement("label", null, "Full name"), React.createElement("input", {
@@ -864,18 +886,7 @@ function AuthScreen({
     },
     disabled: busy || !pw || !email || signupMode && !name,
     onClick: submit
-  }, busy ? signupMode ? "Creating account…" : "Signing in…" : signupMode ? "Create account" : "Sign in")), signupAllowed && React.createElement("p", {
-    className: "sub",
-    style: {
-      textAlign: "center",
-      marginTop: 12
-    }
-  }, React.createElement("a", {
-    onClick: () => {
-      setSignupMode(!signupMode);
-      setErr("");
-    }
-  }, signupMode ? "Already have an account? Sign in" : "New here? Create an account")));
+  }, busy ? signupMode ? "Creating account…" : "Signing in…" : signupMode ? "Create account" : "Sign in")));
 }
 function VerifyEmailScreen({
   token,
