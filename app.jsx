@@ -1752,6 +1752,12 @@ function SharedTripScreen({tripId,token,forMemberId,me,toast}){
   const [claimId,setClaimId]=useState("");
   const [claimBusy,setClaimBusy]=useState(false);
 
+  const dedupeMembers = t => {
+    if(!t)return[];
+    const all=[t.expand?.owner,...(t.expand?.members||[])].filter(Boolean);
+    return all.filter((m,i,a)=>a.findIndex(x=>x.id===m.id)===i);
+  };
+
   const load=useCallback(async()=>{
     try{
       const [t,ex,sp,se]=await Promise.all([
@@ -1761,15 +1767,12 @@ function SharedTripScreen({tripId,token,forMemberId,me,toast}){
         col("settlements").getFullList({filter:`trip="${tripId}"`,query:{token}}),
       ]);
       setTrip(t);setExpenses(ex);setSplits(sp);setSettlements(se);
+      return t;
     }catch(e){ setErr(e?.status===404?"This link is invalid or no longer active.":(e.message||"Couldn't load this trip.")); }
   },[tripId,token]);
   useEffect(()=>{load()},[load]);
 
-  const members=useMemo(()=>{
-    if(!trip)return[];
-    const all=[trip.expand?.owner,...(trip.expand?.members||[])].filter(Boolean);
-    return all.filter((m,i,a)=>a.findIndex(x=>x.id===m.id)===i);
-  },[trip]);
+  const members=useMemo(()=>dedupeMembers(trip),[trip]);
   const base=normCur(trip?.currency);
   const nets=useMemo(()=>computeNets(expenses,splits,settlements),[expenses,splits,settlements]);
   const total=useMemo(()=>r2(expenses.reduce((a,e)=>a+baseAmt(e),0)),[expenses]);
@@ -1787,9 +1790,14 @@ function SharedTripScreen({tripId,token,forMemberId,me,toast}){
     }catch(e){ toast(e?.data?.message||e.message||"Couldn't join this trip."); }
   }
 
-  function afterAuth(){
-    if(directMember){ setClaimId(directMember.id); setClaimStep("confirm"); return; }
-    if(placeholders.length>0){ setClaimStep("pick"); return; }
+  async function afterAuth(){
+    // re-fetch now that we're authenticated — the pre-login fetch can't see other members
+    const t = await load();
+    const freshMembers = dedupeMembers(t);
+    const freshPlaceholders = freshMembers.filter(m=>m.is_placeholder);
+    const direct = forMemberId ? freshPlaceholders.find(p=>p.id===forMemberId) : null;
+    if(direct){ setClaimId(direct.id); setClaimStep("confirm"); return; }
+    if(freshPlaceholders.length>0){ setClaimStep("pick"); return; }
     doJoin();
   }
 
